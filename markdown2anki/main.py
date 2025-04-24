@@ -97,3 +97,5 @@ def apply_processors(front: str, back: str, tag: str) -> Note:
     processed_back = remove_trailing_br_tags(processed_back)
 
     return Note(processed_front, processed_back, list(tag))
+
+
