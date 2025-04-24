@@ -1,7 +1,7 @@
 import genanki
 
 
-class BasicNote(genanki.Note):
+class BasicNoteType(genanki.Note):
     @property
     def guid(self):
         return genanki.guid_for(self.fields[0], self.fields[1])
