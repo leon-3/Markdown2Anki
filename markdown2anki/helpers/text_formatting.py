@@ -145,7 +145,21 @@ def remove_trailing_br_tags(text: str) -> str:
     return text
 
 
+def ignore_image_resizing_in_html(text: str) -> str:
+    """
+    Ignore the image resizing in the markdown text
+    :param text: markdown text
+    :return: processed text
+    """
+
+    # Find all occurences of a string that starts with |, followed by some digits and then ]] and replace it with ]]
+    text = re.sub(r"\|[0-9]+]]", "]]", text)
+
+    return text
+
+
 def get_preprocessors() -> list:
     return [Processor(remove_trailing_new_lines), Processor(format_bullet_points), Processor(replace_symbols),
             Processor(markdown.markdown), BinaryProcessor(convert_to_mathjax), Processor(html_new_line_processor),
-            Processor(remove_trailing_new_lines), Processor(standardize_html), Processor(remove_trailing_br_tags)]
+            Processor(remove_trailing_new_lines), Processor(standardize_html), Processor(remove_trailing_br_tags),
+            Processor(ignore_image_resizing_in_html)]
