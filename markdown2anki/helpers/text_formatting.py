@@ -145,7 +145,7 @@ def remove_trailing_br_tags(text: str) -> str:
     return text
 
 
-def get_standard_preprocessors() -> list:
+def get_preprocessors() -> list:
     return [Processor(remove_trailing_new_lines), Processor(format_bullet_points), Processor(replace_symbols),
             Processor(markdown.markdown), BinaryProcessor(convert_to_mathjax), Processor(html_new_line_processor),
             Processor(remove_trailing_new_lines), Processor(standardize_html), Processor(remove_trailing_br_tags)]

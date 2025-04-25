@@ -5,7 +5,7 @@ import markdown
 
 from .notes import Note, Cloze
 from .helpers.tag_handler import handle_tags, merge_tags
-from .helpers.text_formatting import get_standard_preprocessors
+from .helpers.text_formatting import get_preprocessors
 from .helpers.image_processor import ImageProcessor
 from .helpers.processors import apply_processors
 
@@ -28,7 +28,7 @@ def file_to_preprocessed_cards(input_lines: list, file_name: str, base_tag: str)
     def add_card_if_not_empty():
         if latest_question:
             note = Note(latest_question, latest_answer, [merge_tags(tags)])
-            apply_processors(note, get_standard_preprocessors())
+            apply_processors(note, get_preprocessors())
             card_list.append(note)
 
     for line in input_lines:
