@@ -16,3 +16,15 @@ class Processor:
         else:
             note.front = self.processor(note.front)
             note.back = self.processor(note.back)
+
+class BinaryProcessor(Processor):
+
+    def __init__(self, processor):
+        super().__init__(processor)
+
+    def apply(self, note: Note) -> None:
+        if isinstance(note, Cloze):
+            note.update_cloze_text(self.processor(note.cloze_text, note.get_initial_back()))
+        else:
+            note.front = self.processor(note.front, note.get_initial_front())
+            note.back = self.processor(note.back, note.get_initial_back())
