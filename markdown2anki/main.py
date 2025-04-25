@@ -1,14 +1,12 @@
-from notes import Note
+from notes import Note, Cloze
 from helpers.tag_handler import handle_tags, merge_tags
-from NoteTypes.note_types import BasicNoteType, get_basic_model
 from helpers.text_formatting import format_bullet_points, replace_symbols, convert_to_mathjax, html_new_line_processor, \
     standardize_html, remove_trailing_br_tags, remove_trailing_new_lines
 import markdown
+from helpers.image_handler import ImageHandler
 
-base_model = get_basic_model()
 
-
-def file_to_preprocessed_cards(input_lines: list, file_name: str, base_tag: str):
+def file_to_preprocessed_cards(input_lines: list, file_name: str, base_tag: str) -> None:
     """
     Given a list of lines from a markdown file, parse the lines and add them to the Anki package that will be exported.
     :param input_lines: list of lines from the input file
@@ -99,3 +97,25 @@ def apply_processors(front: str, back: str, tag: str) -> Note:
     return Note(processed_front, processed_back, list(tag))
 
 
+def create_cards(card_list: list, image_handler: ImageHandler) -> list:
+    stored_notes = []
+    for card in card_list:
+        card: Note
+        if "cloze image" in card.get_initial_front().lower():
+            image_handler.process_image_occlusion(card.front, card.tags[0])
+        elif "cloze" in card.get_initial_front().lower():
+            cloze: Cloze = card.convert_to_cloze().get_basic_note_type()
+            cloze.update_cloze_text(image_handler.handle_images(cloze.cloze_text))
+            stored_notes.append(cloze.get_basic_note_type())
+        else:
+            # Handle images
+            card.front = image_handler.handle_images(card.front)
+            card.back = image_handler.handle_images(card.back)
+
+            # Create a new note with the question and answer
+            if "#CODE#" in card.get_initial_front() or "#CODE#" in card.get_initial_back():
+                card.tags.append("TODO_PROCESS_CODE")
+
+            stored_notes.append(card.get_basic_note_type())
+
+    return stored_notes
