@@ -4,10 +4,13 @@ import re
 from collections import defaultdict
 import string
 
+from .processor import Processor
 
-class ImageHandler:
+
+class ImageHandler(Processor):
 
     def __init__(self):
+        super().__init__(self.replace_md_image_with_html)
         self.media_files = []
         self.tags_mapped_to_images = defaultdict(list)  # key: tag, value: list of images
         self.image_occlusion_index = 0
@@ -20,7 +23,7 @@ class ImageHandler:
             os.rmdir("output")
         print("Output folder deleted (Cause: new ImageHandler instance)")
 
-    def handle_images(self, text: str) -> str:
+    def replace_md_image_with_html(self, text: str) -> str:
         """
         Find images in markdown syntax and replace them with HTML image tags, also add them to the media files for
         package handling

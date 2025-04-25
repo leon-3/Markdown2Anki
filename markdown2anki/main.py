@@ -120,12 +120,11 @@ def create_cards(card_list: list, image_handler: ImageHandler) -> list:
                 image_handler.process_image_occlusion(card.back, card.tags[0])
             else:
                 cloze: Cloze = card.convert_to_cloze()
-                cloze.update_cloze_text(image_handler.handle_images(cloze.cloze_text))
+                image_handler.apply(cloze)
                 stored_notes.append(cloze.get_basic_note_type())
         else:
             # Handle images
-            card.front = image_handler.handle_images(card.front)
-            card.back = image_handler.handle_images(card.back)
+            image_handler.apply(card)
 
             # Create a new note with the question and answer
             if "#CODE#" in card.get_initial_front() or "#CODE#" in card.get_initial_back():
