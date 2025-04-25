@@ -62,6 +62,14 @@ def file_to_preprocessed_cards(input_lines: list, file_name: str, base_tag: str)
 
 
 def apply_processors(front: str, back: str, tag: str) -> Note:
+    """
+    Apply all processors to the given front and back text and return a Note object
+    :param front:
+    :param back:
+    :param tag:
+    :return:
+    """
+
     back = remove_trailing_new_lines(back)
 
     # Preprocessing for bullet points and enumerations (otherwise html converter will not work)
@@ -123,33 +131,36 @@ def create_cards(card_list: list, image_handler: ImageHandler) -> list:
     return stored_notes
 
 
-def create_package(note_list: list, image_handler: ImageHandler, package_title: str) -> None:
+def create_package(note_list: list, image_handler: ImageHandler, package_title: str, output: bool = True) -> None:
     """
     Create a new Anki package with the given cards and media files
     :param note_list: list of notes to be added to the package
     :param image_handler: ImageHandler instance to handle images
     :param package_title: title of the package
+    :param output: boolean to indicate if the output should be printed
     :return: None
     """
-    # Create a new deck with given input
+    # Create a new deck with given title
     deck = genanki.Deck(random.randrange(1 << 30, 1 << 31), package_title)
 
-    # Add the notes to the deck
     for note in note_list:
         deck.add_note(note)
 
-    # Write the deck to a file
     package = genanki.Package(deck)
     package.media_files = image_handler.media_files
     package.write_to_file(f'./output/{package_title}.apkg')
-    print(f"\nDeck '{package_title}.apkg' successfully created")
 
-    print(f"- Added {len(deck.notes)} notes to the deck")
-    print(f"- Added {len(image_handler.media_files)} media files to the deck")
+    # Output stats
+    if output:
+        print(f"\nDeck '{package_title}.apkg' successfully created")
 
-    for key in image_handler.tags_mapped_to_images.keys():
-        print(f"\n{key}")
-        for image in image_handler.tags_mapped_to_images[key]:
-            print(f"- {image}")
-    if not image_handler.tags_mapped_to_images.keys():
-        print("- No image occlusions available")
+        print(f"- Added {len(deck.notes)} notes to the deck")
+        print(f"- Added {len(image_handler.media_files)} media files to the deck")
+
+        for key in image_handler.tags_mapped_to_images.keys():
+            print(f"\n{key}")
+            for image in image_handler.tags_mapped_to_images[key]:
+                print(f"- {image}")
+
+        if not image_handler.tags_mapped_to_images.keys():
+            print("- No image occlusions available")
