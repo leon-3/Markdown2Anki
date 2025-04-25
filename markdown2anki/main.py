@@ -115,12 +115,13 @@ def create_cards(card_list: list, image_handler: ImageHandler) -> list:
     stored_notes = []
     for card in card_list:
         card: Note
-        if "image cloze" in card.get_initial_front().lower():
-            image_handler.process_image_occlusion(card.back, card.tags[0])
-        elif "cloze" in card.get_initial_front().lower():
-            cloze: Cloze = card.convert_to_cloze()
-            cloze.update_cloze_text(image_handler.handle_images(cloze.cloze_text))
-            stored_notes.append(cloze.get_basic_note_type())
+        if "cloze" in card.get_initial_front().lower():
+            if "image" in card.get_initial_front().lower():
+                image_handler.process_image_occlusion(card.back, card.tags[0])
+            else:
+                cloze: Cloze = card.convert_to_cloze()
+                cloze.update_cloze_text(image_handler.handle_images(cloze.cloze_text))
+                stored_notes.append(cloze.get_basic_note_type())
         else:
             # Handle images
             card.front = image_handler.handle_images(card.front)
