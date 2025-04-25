@@ -139,4 +139,3 @@ def remove_trailing_br_tags(text: str) -> str:
         text = text[:-4]
 
     return text
-
