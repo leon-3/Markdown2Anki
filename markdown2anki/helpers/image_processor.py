@@ -7,7 +7,7 @@ import string
 from .processor import Processor
 
 
-class ImageHandler(Processor):
+class ImageProcessor(Processor):
 
     def __init__(self):
         super().__init__(self.replace_md_image_with_html)
@@ -22,7 +22,7 @@ class ImageHandler(Processor):
             for file in os.listdir("output"):
                 os.remove(f"output/{file}")
             os.rmdir("output")
-        print("Output folder deleted (Reason: new ImageHandler instance)")
+        print("Output folder deleted (Reason: new ImageProcessor instance)")
 
 
     def replace_md_image_with_html(self, text: str) -> str:
@@ -60,7 +60,7 @@ class ImageHandler(Processor):
         for image in images:
             if not os.path.exists("output"):
                 os.makedirs("output")
-                print("Output folder created (Reason: new ImageHandler instance)")
+                print("Output folder created (Reason: new ImageProcessor instance)")
 
             # get file extension of image
             extension = "." + image[3:-2].split(".")[-1]

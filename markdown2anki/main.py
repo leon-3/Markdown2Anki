@@ -7,7 +7,7 @@ from .notes import Note, Cloze
 from .helpers.tag_handler import handle_tags, merge_tags
 from .helpers.text_formatting import format_bullet_points, replace_symbols, convert_to_mathjax, html_new_line_processor, \
     standardize_html, remove_trailing_br_tags, remove_trailing_new_lines
-from .helpers.image_handler import ImageHandler
+from .helpers.image_processor import ImageProcessor
 
 
 def file_to_preprocessed_cards(input_lines: list, file_name: str, base_tag: str) -> list:
@@ -111,20 +111,20 @@ def apply_processors(front: str, back: str, tag: str) -> Note:
     return Note(processed_front, processed_back, [tag])
 
 
-def create_cards(card_list: list, image_handler: ImageHandler) -> list:
+def create_cards(card_list: list, image_processor: ImageProcessor) -> list:
     stored_notes = []
     for card in card_list:
         card: Note
         if "cloze" in card.get_initial_front().lower():
             if "image" in card.get_initial_front().lower():
-                image_handler.process_image_occlusion(card.back, card.tags[0])
+                image_processor.process_image_occlusion(card.back, card.tags[0])
             else:
                 cloze: Cloze = card.convert_to_cloze()
-                image_handler.apply(cloze)
+                image_processor.apply(cloze)
                 stored_notes.append(cloze.get_basic_note_type())
         else:
             # Handle images
-            image_handler.apply(card)
+            image_processor.apply(card)
 
             # Create a new note with the question and answer
             if "#CODE#" in card.get_initial_front() or "#CODE#" in card.get_initial_back():
@@ -135,11 +135,11 @@ def create_cards(card_list: list, image_handler: ImageHandler) -> list:
     return stored_notes
 
 
-def create_package(note_list: list, image_handler: ImageHandler, package_title: str, output: bool = True) -> None:
+def create_package(note_list: list, image_processor: ImageProcessor, package_title: str, output: bool = True) -> None:
     """
     Create a new Anki package with the given cards and media files
     :param note_list: list of notes to be added to the package
-    :param image_handler: ImageHandler instance to handle images
+    :param image_processor: ImageProcessor instance to handle images
     :param package_title: title of the package
     :param output: boolean to indicate if the output should be printed
     :return: None
@@ -151,7 +151,7 @@ def create_package(note_list: list, image_handler: ImageHandler, package_title: 
         deck.add_note(note)
 
     package = genanki.Package(deck)
-    package.media_files = image_handler.media_files
+    package.media_files = image_processor.media_files
     package.write_to_file(f'{package_title}.apkg')
 
     # Output stats
@@ -159,12 +159,12 @@ def create_package(note_list: list, image_handler: ImageHandler, package_title: 
         print(f"\nDeck '{package_title}.apkg' successfully created")
 
         print(f"- Added {len(deck.notes)} notes to the deck")
-        print(f"- Added {len(image_handler.media_files)} media files to the deck")
+        print(f"- Added {len(image_processor.media_files)} media files to the deck")
 
-        for key in image_handler.tags_mapped_to_images.keys():
+        for key in image_processor.tags_mapped_to_images.keys():
             print(f"\n{key}")
-            for image in image_handler.tags_mapped_to_images[key]:
+            for image in image_processor.tags_mapped_to_images[key]:
                 print(f"- {image}")
 
-        if not image_handler.tags_mapped_to_images.keys():
+        if not image_processor.tags_mapped_to_images.keys():
             print("- No image occlusions available")
