@@ -8,11 +8,11 @@ class BasicNoteType(genanki.Note):
 
 
 def get_basic_model() -> genanki.Model:
-    with open(f'NoteTypes/Basic/styling.css') as file:
+    with open(f'markdown2anki/NoteTypes/Basic/styling.css') as file:
         base_styling = file.read()
-    with open(f'NoteTypes/Basic/front.html', encoding='utf-8') as file:
+    with open(f'markdown2anki/NoteTypes/Basic/front.html', encoding='utf-8') as file:
         base_front = file.read()
-    with open(f'NoteTypes/Basic/back.html', encoding='utf-8') as file:
+    with open(f'markdown2anki/NoteTypes/Basic/back.html', encoding='utf-8') as file:
         base_back = file.read()
 
     base_type = genanki.Model(

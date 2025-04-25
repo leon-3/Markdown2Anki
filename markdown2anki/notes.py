@@ -1,5 +1,4 @@
-from helpers.image_handler import ImageHandler
-from NoteTypes.note_types import BasicNoteType, get_basic_model
+from .NoteTypes.note_types import BasicNoteType, get_basic_model
 
 base_model = get_basic_model()
 
@@ -25,7 +24,7 @@ class Note:
         return BasicNoteType(model=base_model, fields=[self.front, self.back], tags=self.tags)
 
     def convert_to_cloze(self):
-        return Cloze(self.front, self.tags, self.__initial_front, self.__initial_back)
+        return Cloze(self.back, self.tags, self.__initial_front, self.__initial_back)
 
 
 class Cloze(Note):

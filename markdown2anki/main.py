@@ -1,20 +1,22 @@
-from notes import Note, Cloze
-from helpers.tag_handler import handle_tags, merge_tags
-from helpers.text_formatting import format_bullet_points, replace_symbols, convert_to_mathjax, html_new_line_processor, \
-    standardize_html, remove_trailing_br_tags, remove_trailing_new_lines
-import markdown
-from helpers.image_handler import ImageHandler
-import genanki
 import random
 
+import genanki
+import markdown
 
-def file_to_preprocessed_cards(input_lines: list, file_name: str, base_tag: str) -> None:
+from .notes import Note, Cloze
+from .helpers.tag_handler import handle_tags, merge_tags
+from .helpers.text_formatting import format_bullet_points, replace_symbols, convert_to_mathjax, html_new_line_processor, \
+    standardize_html, remove_trailing_br_tags, remove_trailing_new_lines
+from .helpers.image_handler import ImageHandler
+
+
+def file_to_preprocessed_cards(input_lines: list, file_name: str, base_tag: str) -> list:
     """
     Given a list of lines from a markdown file, parse the lines and add them to the Anki package that will be exported.
     :param input_lines: list of lines from the input file
     :param file_name: name of the input file (will be used as the last part of the tag - e.g. "Python::FileName")
     :param base_tag: base tag for the package (e.g. "Python")
-    :return: None, since the function will call the add_card_to_deck function which adds the cards to the package
+    :return: list of cards that need to be processed into different note types
     """
 
     # List is required since tags change dynamically with the handle_tags function, also cut the .md file extension
@@ -60,6 +62,8 @@ def file_to_preprocessed_cards(input_lines: list, file_name: str, base_tag: str)
     # Add the last card to the deck, since it's not covered by the for-loop
     add_card_if_not_empty()
 
+    return card_list
+
 
 def apply_processors(front: str, back: str, tag: str) -> Note:
     """
@@ -104,17 +108,17 @@ def apply_processors(front: str, back: str, tag: str) -> Note:
     processed_front = remove_trailing_br_tags(processed_front)
     processed_back = remove_trailing_br_tags(processed_back)
 
-    return Note(processed_front, processed_back, list(tag))
+    return Note(processed_front, processed_back, [tag])
 
 
 def create_cards(card_list: list, image_handler: ImageHandler) -> list:
     stored_notes = []
     for card in card_list:
         card: Note
-        if "cloze image" in card.get_initial_front().lower():
-            image_handler.process_image_occlusion(card.front, card.tags[0])
+        if "image cloze" in card.get_initial_front().lower():
+            image_handler.process_image_occlusion(card.back, card.tags[0])
         elif "cloze" in card.get_initial_front().lower():
-            cloze: Cloze = card.convert_to_cloze().get_basic_note_type()
+            cloze: Cloze = card.convert_to_cloze()
             cloze.update_cloze_text(image_handler.handle_images(cloze.cloze_text))
             stored_notes.append(cloze.get_basic_note_type())
         else:
@@ -148,7 +152,7 @@ def create_package(note_list: list, image_handler: ImageHandler, package_title: 
 
     package = genanki.Package(deck)
     package.media_files = image_handler.media_files
-    package.write_to_file(f'./output/{package_title}.apkg')
+    package.write_to_file(f'{package_title}.apkg')
 
     # Output stats
     if output:
