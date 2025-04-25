@@ -1,4 +1,8 @@
 import re
+import markdown
+
+from .processors import Processor, BinaryProcessor
+
 
 def format_bullet_points(text: str) -> str:
     """
@@ -10,7 +14,6 @@ def format_bullet_points(text: str) -> str:
     # Add a new line between two lines if the first does not start with a bullet point and the second does
     lines = text.split("\n")
     new_text = ""
-
 
     # Check for two lines, if the first does not start with a bullet point and the second does add a new line in between
     for i in range(len(lines) - 1):
@@ -31,7 +34,7 @@ def format_bullet_points(text: str) -> str:
         if re.match(r"^\d+\.", lines[i].lstrip()) and not re.match(r"^\d+\.", lines[i + 1].lstrip()):
             new_text += "\n"
 
-    new_text += lines[-1] # Add the last line without a new line
+    new_text += lines[-1]  # Add the last line without a new line
     return new_text
 
 
@@ -126,6 +129,7 @@ def standardize_html(text: str) -> str:
     text = text.replace("<strong>", "<b>").replace("</strong>", "</b>")
     return text
 
+
 def remove_trailing_br_tags(text: str) -> str:
     """
     Remove all trailing <br> tags from the text
@@ -139,3 +143,9 @@ def remove_trailing_br_tags(text: str) -> str:
         text = text[:-4]
 
     return text
+
+
+def get_standard_preprocessors() -> list:
+    return [Processor(remove_trailing_new_lines), Processor(format_bullet_points), Processor(replace_symbols),
+            Processor(markdown.markdown), BinaryProcessor(convert_to_mathjax), Processor(html_new_line_processor),
+            Processor(remove_trailing_new_lines), Processor(standardize_html), Processor(remove_trailing_br_tags)]

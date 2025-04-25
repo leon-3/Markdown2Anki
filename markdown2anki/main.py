@@ -5,10 +5,9 @@ import markdown
 
 from .notes import Note, Cloze
 from .helpers.tag_handler import handle_tags, merge_tags
-from .helpers.text_formatting import format_bullet_points, replace_symbols, convert_to_mathjax, html_new_line_processor, \
-    standardize_html, remove_trailing_br_tags, remove_trailing_new_lines
+from .helpers.text_formatting import get_standard_preprocessors
 from .helpers.image_processor import ImageProcessor
-
+from .helpers.processors import apply_processors
 
 def file_to_preprocessed_cards(input_lines: list, file_name: str, base_tag: str) -> list:
     """
@@ -28,7 +27,9 @@ def file_to_preprocessed_cards(input_lines: list, file_name: str, base_tag: str)
 
     def add_card_if_not_empty():
         if latest_question:
-            card_list.append(apply_processors(latest_question, latest_answer, merge_tags(tags)))
+            note = Note(latest_question, latest_answer, [merge_tags(tags)])
+            apply_processors(note, get_standard_preprocessors())
+            card_list.append(note)
 
     for line in input_lines:
         # Case 1: Line starts with a tag (Heading in a markdown file) -> Update Tags and reset card
@@ -63,52 +64,6 @@ def file_to_preprocessed_cards(input_lines: list, file_name: str, base_tag: str)
     add_card_if_not_empty()
 
     return card_list
-
-
-def apply_processors(front: str, back: str, tag: str) -> Note:
-    """
-    Apply all processors to the given front and back text and return a Note object
-    :param front:
-    :param back:
-    :param tag:
-    :return:
-    """
-
-    back = remove_trailing_new_lines(back)
-
-    # Preprocessing for bullet points and enumerations (otherwise html converter will not work)
-    unprocessed_front = format_bullet_points(front)
-    unprocessed_back = format_bullet_points(back)
-
-    # Replace symbols with unicode symbols
-    unprocessed_front = replace_symbols(unprocessed_front)
-    unprocessed_back = replace_symbols(unprocessed_back)
-
-    # Convert markdown to html with markdown module
-    processed_front = markdown.markdown(unprocessed_front)
-    processed_back = markdown.markdown(unprocessed_back)
-
-    # Convert mathjax to html
-    processed_front = convert_to_mathjax(processed_front, unprocessed_front)
-    processed_back = convert_to_mathjax(processed_back, unprocessed_back)
-
-    # Process new lines
-    processed_front = html_new_line_processor(processed_front)
-    processed_back = html_new_line_processor(processed_back)
-
-    # Remove trailing new lines
-    processed_front = remove_trailing_new_lines(processed_front)
-    processed_back = remove_trailing_new_lines(processed_back)
-
-    # Format the html strings for Anki usage
-    processed_front = standardize_html(processed_front)
-    processed_back = standardize_html(processed_back)
-
-    # Remove trailing <br> tags
-    processed_front = remove_trailing_br_tags(processed_front)
-    processed_back = remove_trailing_br_tags(processed_back)
-
-    return Note(processed_front, processed_back, [tag])
 
 
 def create_cards(card_list: list, image_processor: ImageProcessor) -> list:

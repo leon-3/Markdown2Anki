@@ -1,5 +1,16 @@
 from ..notes import Cloze, Note
 
+
+def apply_processors(note: Note, processors: list) -> None:
+    """
+    Apply a list of processors to a note. The processors are applied in the order they are given.
+    :param note: The note to be processed
+    :param processors: A list of processors to be applied to the note
+    """
+    for processor in processors:
+        processor.apply(note)
+
+
 class Processor:
 
     def __init__(self, processor):
@@ -16,6 +27,7 @@ class Processor:
         else:
             note.front = self.processor(note.front)
             note.back = self.processor(note.back)
+
 
 class BinaryProcessor(Processor):
 

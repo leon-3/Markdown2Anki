@@ -4,7 +4,7 @@ import re
 from collections import defaultdict
 import string
 
-from .processor import Processor
+from .processors import Processor
 
 
 class ImageProcessor(Processor):
