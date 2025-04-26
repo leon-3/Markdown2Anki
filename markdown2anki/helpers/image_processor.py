@@ -22,7 +22,7 @@ class ImageProcessor(Processor):
             for file in os.listdir("output"):
                 os.remove(f"output/{file}")
             os.rmdir("output")
-        print("Output folder deleted (Reason: new ImageProcessor instance)")
+            print("Output folder deleted (Reason: new ImageProcessor instance)")
 
 
     def replace_md_image_with_html(self, text: str) -> str:

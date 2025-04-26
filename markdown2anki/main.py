@@ -1,13 +1,13 @@
 import random
 
 import genanki
-import markdown
 
 from .notes import Note, Cloze
 from .helpers.tag_handler import handle_tags, merge_tags
 from .helpers.text_formatting import get_preprocessors
 from .helpers.image_processor import ImageProcessor
 from .helpers.processors import apply_processors
+
 
 def file_to_preprocessed_cards(input_lines: list, file_name: str, base_tag: str) -> list:
     """
