@@ -57,7 +57,7 @@ if __name__ == "__main__":
                 used_base_tag = subject_base_tag + "::" + SUB_DIRECTORY_TAG_DICTIONARY[sub_dir]
 
             sub_directory_path = os.path.join(subject_directory_path, sub_dir)
-            image_processor.set_input_directory(sub_directory_path + "\\")
+            image_processor.set_input_directory(sub_directory_path + "/")
 
             # HANDLE FILES
             for file in os.listdir(sub_directory_path):
