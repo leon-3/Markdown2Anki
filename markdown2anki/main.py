@@ -115,25 +115,29 @@ def create_package(note_list: list, image_processor: ImageProcessor, package_tit
     with warnings.catch_warnings(record=True) as warning_list:
         package.write_to_file(f'{package_title}.apkg')
 
-    if output:
-        print("WARNINGS:")
-        for warning in warning_list:
-            if issubclass(warning.category, UserWarning) and str(warning.message).startswith(FORMAT_WARNING_STRING):
-                print(f"Formatting Warning:{str(warning.message).replace(FORMAT_WARNING_STRING, '')}")
-            else:
-                print(f"Warning: {warning.message}")
+
+
 
     # Output stats
     if output:
-        print(f"\nDeck '{package_title}.apkg' successfully created")
-
+        print(f"PACKAGE SUMMARY")
         print(f"- Added {len(deck.notes)} notes to the deck")
         print(f"- Added {len(image_processor.media_files)} media files to the deck")
+        if image_processor.tags_mapped_to_images.keys():
+            print("\nIMAGE OCCLUSIONS:")
 
-        for key in image_processor.tags_mapped_to_images.keys():
-            print(f"\n{key}")
-            for image in image_processor.tags_mapped_to_images[key]:
-                print(f"- {image}")
-
-        if not image_processor.tags_mapped_to_images.keys():
+            for key in image_processor.tags_mapped_to_images.keys():
+                print(f"{key}")
+                for image in image_processor.tags_mapped_to_images[key]:
+                    print(f"- {image}")
+        else:
             print("- No image occlusions available")
+
+        if warning_list:
+            print("")
+            print("WARNINGS:")
+            for warning in warning_list:
+                if issubclass(warning.category, UserWarning) and str(warning.message).startswith(FORMAT_WARNING_STRING):
+                    print(f"- Formatting Warning:{str(warning.message).replace(FORMAT_WARNING_STRING, '')}")
+                else:
+                    print(f"- Warning: {warning.message}")
