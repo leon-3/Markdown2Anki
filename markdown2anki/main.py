@@ -59,7 +59,7 @@ def file_to_preprocessed_cards(input_lines: list, file_name: str, base_tag: str)
 
         # Case 4: The line indicates by the prefix "EQL: " that this line should also be included in the question
         # -> add the line to the question variable
-        elif line.startswith("EQL: "):
+        elif line.startswith("EQL: ") and latest_question:
             latest_question += "<br>" + line[5:]
 
         # Else-Case: If the line is neither a tag nor a question, it will be added to the answer
