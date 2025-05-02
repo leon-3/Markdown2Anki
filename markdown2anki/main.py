@@ -1,4 +1,5 @@
 import random
+import warnings
 
 import genanki
 
@@ -7,6 +8,9 @@ from .helpers.tag_handler import handle_tags, merge_tags
 from .helpers.text_formatting import get_preprocessors
 from .helpers.image_processor import ImageProcessor
 from .helpers.processors import apply_processors
+
+FORMAT_WARNING_STRING = ("Field contained the following invalid HTML tags. Make sure you are calling html.escape() if "
+                         "your field data isn't already HTML-encoded:")
 
 
 def file_to_preprocessed_cards(input_lines: list, file_name: str, base_tag: str) -> list:
@@ -107,7 +111,17 @@ def create_package(note_list: list, image_processor: ImageProcessor, package_tit
 
     package = genanki.Package(deck)
     package.media_files = image_processor.media_files
-    package.write_to_file(f'{package_title}.apkg')
+
+    with warnings.catch_warnings(record=True) as warning_list:
+        package.write_to_file(f'{package_title}.apkg')
+
+    if output:
+        print("WARNINGS:")
+        for warning in warning_list:
+            if issubclass(warning.category, UserWarning) and str(warning.message).startswith(FORMAT_WARNING_STRING):
+                print(f"Formatting Warning:{str(warning.message).replace(FORMAT_WARNING_STRING, '')}")
+            else:
+                print(f"Warning: {warning.message}")
 
     # Output stats
     if output:
