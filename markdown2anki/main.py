@@ -52,8 +52,10 @@ def file_to_preprocessed_cards(input_lines: list, file_name: str, base_tag: str)
 
         # Case 3: The line before was "---" -> store the line as a question
         elif new_question:
-            latest_question = line
             new_question = False
+            if line.startswith("ADDED: "):
+                continue
+            latest_question = line
 
         # Case 4: The line indicates by the prefix "EQL: " that this line should also be included in the question
         # -> add the line to the question variable
