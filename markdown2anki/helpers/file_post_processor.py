@@ -20,15 +20,12 @@ def add_added_flags_to_each_valid_card(file_name: str) -> None:
 
     new_question = False
     latest_question = ""
-    latest_answer = ""
 
     for i, line in enumerate(lines):
         if line.startswith("#"):
             latest_question = ""
-            latest_answer = ""
         elif line.startswith("---"):
             latest_question = ""
-            latest_answer = ""
             new_question = True
         elif new_question:
             new_question = False

@@ -22,6 +22,14 @@ class Processor:
         self.processor = processor
 
     def apply(self, note: Note) -> None:
+        """
+        Apply the processor to a given note.
+        This method processes the content of a `Note` object by applying the processor function
+        to its text fields. The behavior differs depending on whether the note is a `Cloze` type
+        or a regular `Note`.
+
+        :param note: The note to be processed. It can be a `Cloze` or a regular `Note`.
+        """
         if isinstance(note, Cloze):
             note.update_cloze_text(self.processor(note.cloze_text))
         else:
@@ -30,11 +38,20 @@ class Processor:
 
 
 class BinaryProcessor(Processor):
+    """Difference to processor is that the apply method also passes the initial text to the processor function."""
 
     def __init__(self, processor):
         super().__init__(processor)
 
     def apply(self, note: Note) -> None:
+        """
+        Apply the processor to a given note.
+        This method processes the content of a `Note` object by applying the processor function
+        to its text fields. The behavior differs depending on whether the note is a `Cloze` type
+        or a regular `Note`.
+
+        :param note: The note to be processed. It can be a `Cloze` or a regular `Note`.
+        """
         if isinstance(note, Cloze):
             note.update_cloze_text(self.processor(note.cloze_text, note.get_initial_back()))
         else:

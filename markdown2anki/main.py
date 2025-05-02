@@ -53,6 +53,7 @@ def file_to_preprocessed_cards(input_lines: list, file_name: str, base_tag: str)
         # Case 3: The line before was "---" -> store the line as a question
         elif new_question:
             new_question = False
+            # If the line starts with "ADDED: ", it is already added to the card so it should be skipped
             if line.startswith("ADDED: "):
                 continue
             latest_question = line
