@@ -115,9 +115,6 @@ def create_package(note_list: list, image_processor: ImageProcessor, package_tit
     with warnings.catch_warnings(record=True) as warning_list:
         package.write_to_file(f'{package_title}.apkg')
 
-
-
-
     # Output stats
     if output:
         print(f"PACKAGE SUMMARY")
