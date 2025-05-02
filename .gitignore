@@ -180,3 +180,6 @@ cython_debug/
 /markdown2anki/NoteTypes/Basic/front.html
 /markdown2anki/NoteTypes/Basic/styling.css
 /markdown2anki/NoteTypes/Basic/back.html
+/markdown2anki/NoteTypes/Cloze/back.html
+/markdown2anki/NoteTypes/Cloze/front.html
+/markdown2anki/NoteTypes/Cloze/styling.css
