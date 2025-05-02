@@ -17,6 +17,7 @@ class ImageProcessor(Processor):
         self.image_occlusion_count = 0
         self.used_images_mapped_to_unique_name = dict() # key: original image name, value: unique name
         self.unique_image_name = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8)) + "_image_"
+        self.input_directory = "input/"
 
         if os.path.exists("output"):
             for file in os.listdir("output"):
@@ -39,8 +40,8 @@ class ImageProcessor(Processor):
             # 1. Replace string with the image tag
             text = text.replace(image, f'<img src="{image[3:-2]}">')
             # 2. add the attachment to the media files
-            if "input/" + image[3:-2] not in self.media_files:
-                self.media_files.append("input/" + image[3:-2])
+            if self.input_directory + image[3:-2] not in self.media_files:
+                self.media_files.append(self.input_directory + image[3:-2])
         return text
 
     def process_image_occlusion(self, cloze_text: str, tag: str) -> None:
@@ -68,7 +69,7 @@ class ImageProcessor(Processor):
                 self.used_images_mapped_to_unique_name[image[3:-2]] = self.unique_image_name + str(
                     self.image_occlusion_count) + extension
 
-                with open("input/" + image[3:-2], "rb") as f:
+                with open(self.input_directory + image[3:-2], "rb") as f:
                     with open("output/" + self.unique_image_name + str(self.image_occlusion_count) + extension,
                               "wb") as f1:
                         f1.write(f.read())
@@ -78,3 +79,11 @@ class ImageProcessor(Processor):
                 self.image_occlusion_count += 1
             else:
                 self.tags_mapped_to_images[tag].append(self.used_images_mapped_to_unique_name[image[3:-2]])
+
+    def set_input_directory(self, input_directory: str) -> None:
+        """
+        Set the input directory for the image processor
+        :param input_directory: The input directory
+        :return: None
+        """
+        self.input_directory = input_directory
