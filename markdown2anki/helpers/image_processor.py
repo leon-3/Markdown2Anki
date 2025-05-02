@@ -9,7 +9,7 @@ from .processors import Processor
 
 class ImageProcessor(Processor):
 
-    def __init__(self):
+    def __init__(self, output: bool = True):
         super().__init__(self.replace_md_image_with_html)
 
         self.media_files = [] # Store all media files that will be added to the exported anki package
@@ -18,12 +18,14 @@ class ImageProcessor(Processor):
         self.used_images_mapped_to_unique_name = dict() # key: original image name, value: unique name
         self.unique_image_name = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8)) + "_image_"
         self.input_directory = "input/"
+        self.output = output
 
         if os.path.exists("output"):
             for file in os.listdir("output"):
                 os.remove(f"output/{file}")
             os.rmdir("output")
-            print("Output folder deleted (Reason: new ImageProcessor instance)")
+            if self.output:
+                print("Output folder deleted (Reason: new ImageProcessor instance)")
 
 
     def replace_md_image_with_html(self, text: str) -> str:
@@ -61,7 +63,8 @@ class ImageProcessor(Processor):
         for image in images:
             if not os.path.exists("output"):
                 os.makedirs("output")
-                print("Output folder created (Reason: new ImageProcessor instance)")
+                if self.output:
+                    print("Output folder created (Reason: new ImageProcessor instance)")
 
             # get file extension of image
             extension = "." + image[3:-2].split(".")[-1]
