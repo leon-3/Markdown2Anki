@@ -1,2 +1,3 @@
 from .main import file_to_preprocessed_cards, create_cards, create_package
 from .helpers.image_processor import ImageProcessor
+from .helpers.file_post_processor import add_added_flags_to_each_valid_card
