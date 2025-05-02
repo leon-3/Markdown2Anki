@@ -1,7 +1,7 @@
 import os
 
-from markdown2anki import file_to_preprocessed_cards, create_cards, create_package
-from markdown2anki import ImageProcessor
+from markdown2anki import file_to_preprocessed_cards, create_cards, create_package, ImageProcessor, \
+    add_added_flags_to_each_valid_card
 
 if __name__ == "__main__":
     # CONFIG VARIABLES
@@ -30,6 +30,7 @@ if __name__ == "__main__":
                    os.path.isdir(os.path.join(OBSIDIAN_VAULT_DIRECTORY, d))]
     subject_base_tag = BASE_TAG
     skip_information = []
+    processed_files = []
 
     # CHECK FOR VALID SUBJECTS
     for directory in directories:
@@ -62,6 +63,7 @@ if __name__ == "__main__":
             # HANDLE FILES
             for file in os.listdir(sub_directory_path):
                 if file.endswith(".md"):
+                    processed_files.append(os.path.join(sub_directory_path, file))
                     with open(os.path.join(sub_directory_path, file), encoding="utf-8") as f:
                         basic_cards = file_to_preprocessed_cards(f.read().split("\n"), file, used_base_tag)
                         note_list += create_cards(basic_cards, image_processor)
@@ -74,3 +76,6 @@ if __name__ == "__main__":
         print("")
 
     create_package(note_list, image_processor, PACKAGE_NAME)
+
+    for file in processed_files:
+        add_added_flags_to_each_valid_card(file)
