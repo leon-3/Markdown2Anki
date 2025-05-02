@@ -1,6 +1,7 @@
-from .NoteTypes.note_types import BasicNoteType, get_basic_model
+from .NoteTypes.note_types import BasicNoteType, ClozeNoteType, get_basic_model, get_cloze_model
 
 base_model = get_basic_model()
+cloze_model = get_cloze_model()
 
 
 class Note:
@@ -45,3 +46,4 @@ class Cloze(Note):
 
     def get_basic_note_type(self):
         return BasicNoteType(model=base_model, fields=[self.cloze_text, ""], tags=self.tags)
+        # return ClozeNoteType(model=cloze_model, fields=[self.cloze_text, ""], tags=self.tags)
