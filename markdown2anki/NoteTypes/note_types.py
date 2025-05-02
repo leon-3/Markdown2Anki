@@ -18,7 +18,7 @@ def get_basic_model() -> genanki.Model:
         base_back = file.read()
 
     base_type = genanki.Model(
-        1937157822, f'Basic (genanki)',
+        1633854805146, f'Basic',
         fields=[
             {
                 'name': 'Front',

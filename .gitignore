@@ -177,3 +177,6 @@ cython_debug/
 /input
 /output
 *.apkg
+/markdown2anki/NoteTypes/Basic/front.html
+/markdown2anki/NoteTypes/Basic/styling.css
+/markdown2anki/NoteTypes/Basic/back.html
