@@ -37,7 +37,7 @@ class Cloze(Note):
 
         self.tags.append("TODO_PROCESS_CLOZES")
 
-        if "#CODE#" in cloze_text:
+        if "#CODE#" in cloze_text.lower():
             self.tags.append("TODO_PROCESS_CODE")
 
     def update_cloze_text(self, cloze_text: str):
