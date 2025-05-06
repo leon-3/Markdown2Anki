@@ -65,6 +65,7 @@ def convert_to_mathjax(text_html: str, text_org: str) -> str:
     :return: text with appropriate mathjax tags
     """
 
+    # Match LaTeX math expressions enclosed in single ($...$) or double ($$...$$) dollar signs
     mathjax_pattern = r"\$\$.*?\$\$|\$.*?\$"
 
     original_mathjax = re.findall(mathjax_pattern, text_org, re.MULTILINE | re.DOTALL)
@@ -158,8 +159,15 @@ def ignore_image_resizing_in_html(text: str) -> str:
     return text
 
 
+def cloze_safe_math_jax(text: str) -> str:
+    mathjax_pattern = r"(\$\$.*?\$\$|\$.*?\$)"
+    def replace_brackets(match):
+        return match.group(0).replace("{{", "{ {").replace("}}", "} }")
+    return re.sub(mathjax_pattern, replace_brackets, text)
+
+
 def get_preprocessors() -> list:
-    return [Processor(remove_trailing_new_lines), Processor(format_bullet_points), Processor(replace_symbols),
-            Processor(markdown.markdown), BinaryProcessor(convert_to_mathjax), Processor(html_new_line_processor),
-            Processor(remove_trailing_new_lines), Processor(standardize_html), Processor(remove_trailing_br_tags),
-            Processor(ignore_image_resizing_in_html)]
+    return [Processor(cloze_safe_math_jax), Processor(remove_trailing_new_lines), Processor(format_bullet_points),
+            Processor(replace_symbols), Processor(markdown.markdown), BinaryProcessor(convert_to_mathjax),
+            Processor(html_new_line_processor), Processor(remove_trailing_new_lines), Processor(standardize_html),
+            Processor(remove_trailing_br_tags), Processor(ignore_image_resizing_in_html)]

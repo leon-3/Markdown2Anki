@@ -19,7 +19,8 @@ if __name__ == "__main__":
     SUB_DIRECTORY_TAG_DICTIONARY = {
         "Anki - Lectures": "Lectures",
         "Anki - Exercises": "Exercises",
-        "Anki - C-Vorkurs": "C-Vorkurs"
+        "Anki - C-Vorkurs": "C-Vorkurs",
+        "Anki - Quizes": "Quizes"
     }
     IGNORE_DIRECTORIES = [".git", ".obsidian", "Archive", "templates"]
 
