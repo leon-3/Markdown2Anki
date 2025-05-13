@@ -20,7 +20,7 @@ if __name__ == "__main__":
         "Anki - Lectures": "Lectures",
         "Anki - Exercises": "Exercises",
         "Anki - C-Vorkurs": "C-Vorkurs",
-        "Anki - Quizes": "Quizes"
+        "Anki - Quizzes": "Quizzes"
     }
     IGNORE_DIRECTORIES = [".git", ".obsidian", "Archive", "templates"]
 
