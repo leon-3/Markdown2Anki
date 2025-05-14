@@ -1,28 +1,21 @@
 import os
+from dotenv import load_dotenv
+import json
 
 from markdown2anki import file_to_preprocessed_cards, create_cards, create_package, ImageProcessor, \
     add_added_flags_to_each_valid_card
 
+load_dotenv()
+
 if __name__ == "__main__":
     # CONFIG VARIABLES
-    BASE_TAG = "University"
-    OBSIDIAN_VAULT_DIRECTORY = r"D:\2. Coding\[Markdown] TUM Anki\TUM-Anki"
-    PACKAGE_NAME = "TUM-Anki"
-    SUBJECT_TAG_DICTIONARY = {
-        "IN0003 - Funktionale Programmierung und Verifikation": "IN0003_FPV",
-        "IN0005 - Grundlagenpraktikum Rechnerarchitektur": "IN0005_GRA",
-        "IN0006 - Einführung in die Softwaretechnik": "IN0006_EIST",
-        "IN0007 - Grundlagen Algorithmen und Datenstrukturen": "IN0007_GAD",
-        "IN0011 - Einführung in die Theoretische Informatik": "IN0011_Theo",
-        "MA0901 - Lineare Algebra": "MA0901_LinAlg"
-    }
-    SUB_DIRECTORY_TAG_DICTIONARY = {
-        "Anki - Lectures": "Lectures",
-        "Anki - Exercises": "Exercises",
-        "Anki - C-Vorkurs": "C-Vorkurs",
-        "Anki - Quizzes": "Quizzes"
-    }
-    IGNORE_DIRECTORIES = [".git", ".obsidian", "Archive", "templates"]
+
+    BASE_TAG = os.getenv("BASE_TAG", "University")
+    OBSIDIAN_VAULT_DIRECTORY = os.getenv("OBSIDIAN_VAULT_DIRECTORY", r"D:\2. Coding\[Markdown] TUM Anki\TUM-Anki")
+    PACKAGE_NAME = os.getenv("PACKAGE_NAME", "TUM-Anki")
+    SUBJECT_TAG_DICTIONARY = json.loads(os.getenv("SUBJECT_TAG_DICTIONARY", "{}"))
+    SUB_DIRECTORY_TAG_DICTIONARY = json.loads(os.getenv("SUB_DIRECTORY_TAG_DICTIONARY", "{}"))
+    IGNORE_DIRECTORIES = json.loads(os.getenv("IGNORE_DIRECTORIES", "[]"))
 
     # get all directories directly located on the first level of the obsidian vault
     image_processor = ImageProcessor(False)
