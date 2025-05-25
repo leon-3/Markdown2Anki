@@ -89,7 +89,7 @@ def create_cards(card_list: list, image_processor: ImageProcessor) -> list:
             image_processor.apply(card)
 
             # Create a new note with the question and answer
-            if "#CODE#" in card.get_initial_front().lower() or "#CODE#" in card.get_initial_back().lower():
+            if "#CODE#" in card.get_initial_front() or "#CODE#" in card.get_initial_back():
                 card.tags.append("TODO_PROCESS_CODE")
 
             stored_notes.append(card.get_basic_note_type())
