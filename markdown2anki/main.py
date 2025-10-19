@@ -25,6 +25,7 @@ def file_to_preprocessed_cards(input_lines: list, file_name: str, base_tag: str)
     # List is required since tags change dynamically with the handle_tags function, also cut the .md file extension
     tags = [base_tag, file_name[:-3]]
     new_question = False  # Indicates that "---" is found, and it is likely that a new question will be following
+    in_code_block = False
     latest_question = ""
     latest_answer = ""
     card_list = []
@@ -36,8 +37,11 @@ def file_to_preprocessed_cards(input_lines: list, file_name: str, base_tag: str)
             card_list.append(note)
 
     for line in input_lines:
+        if line.startswith("```"):
+            in_code_block = not in_code_block
+
         # Case 1: Line starts with a tag (Heading in a markdown file) -> Update Tags and reset card
-        if line.startswith("#"):
+        if line.startswith("#") and not in_code_block:
             add_card_if_not_empty()
             latest_question = ""
             latest_answer = ""
@@ -49,6 +53,7 @@ def file_to_preprocessed_cards(input_lines: list, file_name: str, base_tag: str)
             latest_question = ""
             latest_answer = ""
             new_question = True
+            in_code_block = False
 
         # Case 3: The line before was "---" -> store the line as a question
         elif new_question:

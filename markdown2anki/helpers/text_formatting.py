@@ -38,6 +38,28 @@ def standardize_bullet_indentation(text: str) -> str:
     return '\n'.join(processed_lines)
 
 
+def escape_code_comments(text: str) -> str:
+    """
+    Escape all hash symbols (#) in code comments to avoid markdown parsing issues
+    :param text: given markdown text
+    :return: processed text
+    """
+
+    # Match code blocks enclosed in triple backticks
+    code_block_pattern = r"```(.*?)```"
+
+    def escape_hashes(match):
+        code_block = match.group(0)
+        # Escape hash symbols in the code block
+        escaped_code_block = code_block.replace("#", r"\#")
+        return escaped_code_block
+
+    # Replace code blocks with escaped hash symbols
+    processed_text = re.sub(code_block_pattern, escape_hashes, text, flags=re.DOTALL)
+
+    return processed_text
+
+
 def format_bullet_points(text: str) -> str:
     """
     Format the bullet points and enumerations in the Markdown text to ensure good html processing
@@ -201,7 +223,7 @@ def cloze_safe_math_jax(text: str) -> str:
 
 
 def get_preprocessors() -> list:
-    return [Processor(cloze_safe_math_jax), Processor(remove_trailing_new_lines),
+    return [Processor(cloze_safe_math_jax), Processor(remove_trailing_new_lines), Processor(escape_code_comments),
             Processor(standardize_bullet_indentation), Processor(format_bullet_points), Processor(replace_symbols),
             Processor(markdown.markdown), BinaryProcessor(convert_to_mathjax), Processor(html_new_line_processor),
             Processor(remove_trailing_new_lines), Processor(standardize_html), Processor(remove_trailing_br_tags),
