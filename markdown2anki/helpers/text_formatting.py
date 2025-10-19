@@ -4,6 +4,40 @@ import markdown
 from .processors import Processor, BinaryProcessor
 
 
+def standardize_bullet_indentation(text: str) -> str:
+    """
+    Standardize bullet point indentation by converting tabs to 4 spaces.
+    Removes excess spaces (amount mod 4) before bullet points.
+
+    :param text: text to process (can contain multiple lines)
+    :return: text with standardized indentation for all lines
+    """
+    lines = text.split('\n')
+    processed_lines = []
+
+    for line in lines:
+        if not line.lstrip().startswith('-'):
+            processed_lines.append(line)
+            continue
+
+        # First, convert all tabs to 4 spaces
+        line = line.replace('\t', '    ')
+
+        # Count leading spaces
+        leading_spaces = len(line) - len(line.lstrip())
+
+        # Calculate number of tabs (4 spaces = 1 tab)
+        num_tabs = leading_spaces // 4
+
+        # Get the rest of the line without leading spaces
+        content = line.lstrip()
+
+        # Add line with standardized indentation (4 spaces per tab level)
+        processed_lines.append('\t' * num_tabs + content)
+
+    return '\n'.join(processed_lines)
+
+
 def format_bullet_points(text: str) -> str:
     """
     Format the bullet points and enumerations in the Markdown text to ensure good html processing
@@ -167,7 +201,8 @@ def cloze_safe_math_jax(text: str) -> str:
 
 
 def get_preprocessors() -> list:
-    return [Processor(cloze_safe_math_jax), Processor(remove_trailing_new_lines), Processor(format_bullet_points),
-            Processor(replace_symbols), Processor(markdown.markdown), BinaryProcessor(convert_to_mathjax),
-            Processor(html_new_line_processor), Processor(remove_trailing_new_lines), Processor(standardize_html),
-            Processor(remove_trailing_br_tags), Processor(ignore_image_resizing_in_html)]
+    return [Processor(cloze_safe_math_jax), Processor(remove_trailing_new_lines),
+            Processor(standardize_bullet_indentation), Processor(format_bullet_points), Processor(replace_symbols),
+            Processor(markdown.markdown), BinaryProcessor(convert_to_mathjax), Processor(html_new_line_processor),
+            Processor(remove_trailing_new_lines), Processor(standardize_html), Processor(remove_trailing_br_tags),
+            Processor(ignore_image_resizing_in_html)]
