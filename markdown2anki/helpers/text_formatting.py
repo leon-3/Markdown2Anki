@@ -104,7 +104,8 @@ def replace_symbols(text: str) -> str:
     # Dictionary with mappings from text to unicode symbols
     mappings = {
         "->": "→",
-        "=>": "⇒"
+        "=>": "⇒",
+        "• ": "- "
     }
 
     for replace_key in mappings.keys():
@@ -222,9 +223,29 @@ def cloze_safe_math_jax(text: str) -> str:
     return re.sub(mathjax_pattern, replace_brackets, text)
 
 
+def remove_keyword_lines(text: str, keywords: list) -> str:
+    """
+    Remove all lines that only contain whitespaces and the keyword (ignoring HTML tags)
+    :param text: given text
+    :param keywords: list of keywords
+    :return: processed text
+    """
+    lines = text.split("\n")
+    processed_lines = []
+
+    for line in lines:
+        # Remove HTML tags to check the actual content
+        stripped_line = re.sub(r'<[^>]+>', '', line).strip()
+
+        if not any(stripped_line == keyword for keyword in keywords):
+            processed_lines.append(line)
+
+    return "\n".join(processed_lines)
+
+
 def get_preprocessors() -> list:
-    return [Processor(cloze_safe_math_jax), Processor(remove_trailing_new_lines), Processor(escape_code_comments),
-            Processor(standardize_bullet_indentation), Processor(format_bullet_points), Processor(replace_symbols),
+    return [Processor(replace_symbols), Processor(cloze_safe_math_jax), Processor(remove_trailing_new_lines),
+            Processor(escape_code_comments), Processor(standardize_bullet_indentation), Processor(format_bullet_points),
             Processor(markdown.markdown), BinaryProcessor(convert_to_mathjax), Processor(html_new_line_processor),
             Processor(remove_trailing_new_lines), Processor(standardize_html), Processor(remove_trailing_br_tags),
             Processor(ignore_image_resizing_in_html)]

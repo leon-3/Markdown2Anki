@@ -5,12 +5,10 @@ import genanki
 
 from .notes import Note, Cloze
 from .helpers.tag_handler import handle_tags, merge_tags
-from .helpers.text_formatting import get_preprocessors
+from .helpers.text_formatting import get_preprocessors, remove_keyword_lines
 from .helpers.image_processor import ImageProcessor
 from .helpers.processors import apply_processors
-
-FORMAT_WARNING_STRING = ("Field contained the following invalid HTML tags. Make sure you are calling html.escape() if "
-                         "your field data isn't already HTML-encoded:")
+from .constants import FORMAT_WARNING_STRING, CODE_KEYWORDS
 
 
 def file_to_preprocessed_cards(input_lines: list, file_name: str, base_tag: str) -> list:
@@ -26,6 +24,7 @@ def file_to_preprocessed_cards(input_lines: list, file_name: str, base_tag: str)
     tags = [base_tag, file_name[:-3]]
     new_question = False  # Indicates that "---" is found, and it is likely that a new question will be following
     in_code_block = False
+    skipped = False
     latest_question = ""
     latest_answer = ""
     card_list = []
@@ -35,6 +34,10 @@ def file_to_preprocessed_cards(input_lines: list, file_name: str, base_tag: str)
             note = Note(latest_question, latest_answer, [merge_tags(tags)])
             apply_processors(note, get_preprocessors())
             card_list.append(note)
+        elif latest_answer.strip() and not skipped:
+            print(f"ERROR: Found an answer without a question (Filename: {file_name}). Skipping the answer:\n")
+            print(latest_answer)
+            print("\n\n")
 
     for line in input_lines:
         if line.startswith("```"):
@@ -54,12 +57,14 @@ def file_to_preprocessed_cards(input_lines: list, file_name: str, base_tag: str)
             latest_answer = ""
             new_question = True
             in_code_block = False
+            skipped = False
 
         # Case 3: The line before was "---" -> store the line as a question
         elif new_question:
             new_question = False
             # If the line starts with "ADDED: ", it is already added to the card so it should be skipped
             if line.startswith("ADDED: "):
+                skipped = True
                 continue
             latest_question = line
 
@@ -94,8 +99,12 @@ def create_cards(card_list: list, image_processor: ImageProcessor) -> list:
             image_processor.apply(card)
 
             # Create a new note with the question and answer
-            if "#CODE#" in card.get_initial_front() or "#CODE#" in card.get_initial_back():
-                card.tags.append("TODO_PROCESS_CODE")
+            for keyword in CODE_KEYWORDS:
+                if keyword in card.get_initial_front() or keyword in card.get_initial_back():
+                    card.tags.append("TODO_PROCESS_CODE")
+                    card.set_front(remove_keyword_lines(card.front, CODE_KEYWORDS))
+                    card.set_back(remove_keyword_lines(card.back, CODE_KEYWORDS))
+                    break
 
             stored_notes.append(card.get_basic_note_type())
 

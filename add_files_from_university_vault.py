@@ -43,6 +43,8 @@ if __name__ == "__main__":
 
         # HANDLE SUB DIRECTORIES (e. g. "Lecture", "Exercises", "Tutorials")
         for sub_dir in sub_directories:
+            if sub_dir in IGNORE_DIRECTORIES:
+                continue
             if sub_dir not in SUB_DIRECTORY_TAG_DICTIONARY:
                 skip_information.append(
                     f"Skipped sub-directory '{sub_dir}' (not a sub directory). Course name: {directory}")

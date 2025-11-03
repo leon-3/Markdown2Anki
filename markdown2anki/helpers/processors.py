@@ -1,7 +1,4 @@
-from ..notes import Cloze, Note
-
-
-def apply_processors(note: Note, processors: list) -> None:
+def apply_processors(note, processors: list) -> None:
     """
     Apply a list of processors to a note. The processors are applied in the order they are given.
     :param note: The note to be processed
@@ -21,7 +18,7 @@ class Processor:
         """
         self.processor = processor
 
-    def apply(self, note: Note) -> None:
+    def apply(self, note) -> None:
         """
         Apply the processor to a given note.
         This method processes the content of a `Note` object by applying the processor function
@@ -30,6 +27,8 @@ class Processor:
 
         :param note: The note to be processed. It can be a `Cloze` or a regular `Note`.
         """
+        from ..notes import Cloze
+
         if isinstance(note, Cloze):
             note.update_cloze_text(self.processor(note.cloze_text))
         else:
@@ -43,7 +42,7 @@ class BinaryProcessor(Processor):
     def __init__(self, processor):
         super().__init__(processor)
 
-    def apply(self, note: Note) -> None:
+    def apply(self, note) -> None:
         """
         Apply the processor to a given note.
         This method processes the content of a `Note` object by applying the processor function
@@ -52,6 +51,8 @@ class BinaryProcessor(Processor):
 
         :param note: The note to be processed. It can be a `Cloze` or a regular `Note`.
         """
+        from ..notes import Cloze
+
         if isinstance(note, Cloze):
             note.update_cloze_text(self.processor(note.cloze_text, note.get_initial_back()))
         else:
