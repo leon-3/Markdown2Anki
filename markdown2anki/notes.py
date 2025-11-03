@@ -1,6 +1,6 @@
 from .NoteTypes.note_types import BasicNoteType, get_basic_model, get_cloze_model
 from .helpers.text_formatting import remove_keyword_lines
-from .constants import CODE_KEYWORDS
+from .constants import CODE_KEYWORDS, CLOZE_TAG, CODE_TAG
 
 base_model = get_basic_model()
 cloze_model = get_cloze_model()
@@ -43,11 +43,11 @@ class Cloze(Note):
         super().__init__("CLOZE", cloze_text, tags, initial_front, initial_back)
         self.cloze_text = cloze_text
 
-        self.tags.append("TODO_PROCESS_CLOZES")
+        self.tags.append(CLOZE_TAG)
 
         for keyword in CODE_KEYWORDS:
             if keyword in cloze_text:
-                self.tags.append("TODO_PROCESS_CODE")
+                self.tags.append(CODE_TAG)
                 self.update_cloze_text(remove_keyword_lines(cloze_text, CODE_KEYWORDS))
                 break
 

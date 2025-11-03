@@ -8,7 +8,7 @@ from .helpers.tag_handler import handle_tags, merge_tags
 from .helpers.text_formatting import get_preprocessors, remove_keyword_lines
 from .helpers.image_processor import ImageProcessor
 from .helpers.processors import apply_processors
-from .constants import FORMAT_WARNING_STRING, CODE_KEYWORDS
+from .constants import FORMAT_WARNING_STRING, CODE_KEYWORDS, CLOZE_TAG, CODE_TAG
 
 
 def file_to_preprocessed_cards(input_lines: list, file_name: str, base_tag: str) -> list:
@@ -101,7 +101,7 @@ def create_cards(card_list: list, image_processor: ImageProcessor) -> list:
             # Create a new note with the question and answer
             for keyword in CODE_KEYWORDS:
                 if keyword in card.get_initial_front() or keyword in card.get_initial_back():
-                    card.tags.append("TODO_PROCESS_CODE")
+                    card.tags.append(CODE_TAG)
                     card.set_front(remove_keyword_lines(card.front, CODE_KEYWORDS))
                     card.set_back(remove_keyword_lines(card.back, CODE_KEYWORDS))
                     break
@@ -137,7 +137,7 @@ def create_package(note_list: list, image_processor: ImageProcessor, package_tit
         print(f"PACKAGE SUMMARY")
         print(f"- Added {len(deck.notes)} notes to the deck")
         # calculate number of clozes
-        num_clozes = sum(1 for note in note_list if isinstance(note, genanki.Note) and "TODO_PROCESS_CLOZES" in note.tags)
+        num_clozes = sum(1 for note in note_list if isinstance(note, genanki.Note) and CLOZE_TAG in note.tags)
         print(f"- Added {num_clozes} cloze notes to the deck")
 
         print(f"- Added {len(image_processor.media_files)} media files to the deck")
