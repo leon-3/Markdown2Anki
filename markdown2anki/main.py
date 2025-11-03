@@ -136,6 +136,10 @@ def create_package(note_list: list, image_processor: ImageProcessor, package_tit
     if output:
         print(f"PACKAGE SUMMARY")
         print(f"- Added {len(deck.notes)} notes to the deck")
+        # calculate number of clozes
+        num_clozes = sum(1 for note in note_list if isinstance(note, genanki.Note) and "TODO_PROCESS_CLOZES" in note.tags)
+        print(f"- Added {num_clozes} cloze notes to the deck")
+
         print(f"- Added {len(image_processor.media_files)} media files to the deck")
         if image_processor.tags_mapped_to_images.keys():
             print("\nIMAGE OCCLUSIONS:")
