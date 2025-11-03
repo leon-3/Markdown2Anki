@@ -252,21 +252,36 @@ def remove_keyword_lines(text: str, keywords: list) -> str:
 
 def remove_new_lines_for_display_math_blocks(text: str) -> str:
     """
-    Remove new lines before and after display math blocks ($$...$$) to ensure that the blocks are displayed tightly and
-    not with too much unnecessary spacing.
+    Remove new lines before display math blocks ($$...$$) and selectively after them.
+    Preserves newlines after blocks if followed by bullet points or enumerations.
     :param text: given text
     :return: processed text
     """
+    # Pattern to match display math blocks with potential surrounding newlines
+    pattern = r'(\n*)\$\$(.*?)\$\$(\n*)(?=\s*[-\d])'
 
-    # Pattern to match display math blocks
-    pattern = r'\n*\$\$.*?\$\$\n*'
+    def process_block(match):
+        # Always remove leading newlines
+        block_content = match.group(2)
+        trailing_newlines = match.group(3)
+        next_char = match.string[match.end():match.end() + 10].lstrip()
 
-    def remove_surrounding_newlines(match):
-        block = match.group(0)
-        return block.strip('\n')
+        # Check if followed by bullet point or enumeration
+        if next_char.startswith('-') or (next_char and next_char[0].isdigit() and '.' in next_char[:3]):
+            # Keep one newline before list items
+            return f'$${block_content}$$\n'
+        else:
+            # Remove trailing newlines for non-list content
+            return f'$${block_content}$$'
 
-    return re.sub(pattern, remove_surrounding_newlines, text, flags=re.DOTALL)
+    # First handle blocks followed by list items
+    text = re.sub(pattern, process_block, text, flags=re.DOTALL)
 
+    # Then handle remaining blocks (not followed by lists)
+    pattern_remaining = r'\n+\$\$(.*?)\$\$\n+'
+    text = re.sub(pattern_remaining, r'$$\1$$', text, flags=re.DOTALL)
+
+    return text
 
 def get_preprocessors() -> list:
     return [Processor(replace_symbols), Processor(remove_trailing_new_lines),
