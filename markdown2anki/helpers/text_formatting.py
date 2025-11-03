@@ -222,13 +222,12 @@ def cloze_safe_math_jax(text: str) -> str:
     :param text: given text
     :return: processed text
     """
-    mathjax_pattern = r"(\$\$.*?\$\$|\$.*?\$)"
+    mathjax_pattern = r"(\\\[.*?\\\]|\\\(.*?\\\))"
 
     def replace_brackets(match):
         return match.group(0).replace("{{", "{ {").replace("}}", "} }")
 
-    return re.sub(mathjax_pattern, replace_brackets, text)
-
+    return re.sub(mathjax_pattern, replace_brackets, text, flags=re.DOTALL)
 
 def remove_keyword_lines(text: str, keywords: list) -> str:
     """
@@ -270,9 +269,9 @@ def remove_new_lines_for_display_math_blocks(text: str) -> str:
 
 
 def get_preprocessors() -> list:
-    return [Processor(replace_symbols), Processor(cloze_safe_math_jax), Processor(remove_trailing_new_lines),
+    return [Processor(replace_symbols), Processor(remove_trailing_new_lines),
             Processor(remove_new_lines_for_display_math_blocks), Processor(escape_code_comments),
             Processor(standardize_bullet_indentation), Processor(format_bullet_points), Processor(markdown.markdown),
-            BinaryProcessor(convert_to_mathjax), Processor(html_new_line_processor),
+            BinaryProcessor(convert_to_mathjax), Processor(cloze_safe_math_jax), Processor(html_new_line_processor),
             Processor(remove_trailing_new_lines), Processor(standardize_html), Processor(remove_trailing_br_tags),
             Processor(ignore_image_resizing_in_html)]
