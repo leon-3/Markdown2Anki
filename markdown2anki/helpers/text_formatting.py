@@ -217,15 +217,23 @@ def ignore_image_resizing_in_html(text: str) -> str:
 
 
 def cloze_safe_math_jax(text: str) -> str:
+    """
+    Make mathjax expressions safe for cloze deletions by replacing {{ and }} with { { and } }
+    :param text: given text
+    :return: processed text
+    """
     mathjax_pattern = r"(\$\$.*?\$\$|\$.*?\$)"
+
     def replace_brackets(match):
         return match.group(0).replace("{{", "{ {").replace("}}", "} }")
+
     return re.sub(mathjax_pattern, replace_brackets, text)
 
 
 def remove_keyword_lines(text: str, keywords: list) -> str:
     """
     Remove all lines that only contain whitespaces and the keyword (ignoring HTML tags)
+    NOTE: This cannot be used as a general processor since it needs the keywords as input
     :param text: given text
     :param keywords: list of keywords
     :return: processed text
@@ -243,9 +251,28 @@ def remove_keyword_lines(text: str, keywords: list) -> str:
     return "\n".join(processed_lines)
 
 
+def remove_new_lines_for_display_math_blocks(text: str) -> str:
+    """
+    Remove new lines before and after display math blocks ($$...$$) to ensure that the blocks are displayed tightly and
+    not with too much unnecessary spacing.
+    :param text: given text
+    :return: processed text
+    """
+
+    # Pattern to match display math blocks
+    pattern = r'\n*\$\$.*?\$\$\n*'
+
+    def remove_surrounding_newlines(match):
+        block = match.group(0)
+        return block.strip('\n')
+
+    return re.sub(pattern, remove_surrounding_newlines, text, flags=re.DOTALL)
+
+
 def get_preprocessors() -> list:
     return [Processor(replace_symbols), Processor(cloze_safe_math_jax), Processor(remove_trailing_new_lines),
-            Processor(escape_code_comments), Processor(standardize_bullet_indentation), Processor(format_bullet_points),
-            Processor(markdown.markdown), BinaryProcessor(convert_to_mathjax), Processor(html_new_line_processor),
+            Processor(remove_new_lines_for_display_math_blocks), Processor(escape_code_comments),
+            Processor(standardize_bullet_indentation), Processor(format_bullet_points), Processor(markdown.markdown),
+            BinaryProcessor(convert_to_mathjax), Processor(html_new_line_processor),
             Processor(remove_trailing_new_lines), Processor(standardize_html), Processor(remove_trailing_br_tags),
             Processor(ignore_image_resizing_in_html)]

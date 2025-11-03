@@ -17,4 +17,7 @@ if __name__ == "__main__":
         else:
             print(f"Skipped file '{file}' (not a markdown file)")
 
+    for card in note_list:
+        print(card.fields[0])
+
     create_package(note_list, image_processor, "output")
