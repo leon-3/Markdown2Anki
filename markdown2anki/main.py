@@ -35,7 +35,7 @@ def file_to_preprocessed_cards(input_lines: list, file_name: str, base_tag: str)
             apply_processors(note, get_preprocessors())
             card_list.append(note)
         elif latest_answer.strip() and not skipped:
-            print(f"ERROR: Found an answer without a question (Filename: {file_name}). Skipping the answer:\n")
+            print(f"ERROR: Found an answer without a question (Filename: {file_name}). Skipping the question:\n")
             print(latest_answer)
             print("\n\n")
 
