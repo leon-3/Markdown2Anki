@@ -1,4 +1,5 @@
-# Byte-compiled / optimized / DLL files
+# Byte-compiled / optimized / DLLsudo mount -t ntfs-3g /dev/sda2 /mnt/external
+ files
 __pycache__/
 *.py[cod]
 *$py.class
@@ -183,3 +184,4 @@ cython_debug/
 /markdown2anki/NoteTypes/Cloze/back.html
 /markdown2anki/NoteTypes/Cloze/front.html
 /markdown2anki/NoteTypes/Cloze/styling.css
+add_files_from_ltk.py
