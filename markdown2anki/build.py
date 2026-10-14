@@ -5,7 +5,6 @@ import filecmp
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 from .constants import CLOZE_TAG, CODE_KEYWORDS, CODE_TAG
 from .parser import KIND_CLOZE, KIND_IMAGE_OCCLUSION, LEVEL_ERROR, LEVEL_WARNING, Card, Diagnostic
@@ -28,47 +27,78 @@ MODEL_CLOZE = "cloze"
 class RenderedNote:
     card: Card
     model: str
-    fields: List[str]
-    tags: List[str]
-    media: List[Path] = field(default_factory=list)
+    fields: list[str]
+    tags: list[str]
+    media: list[Path] = field(default_factory=list)
+    deck: str | None = None
 
 
 @dataclass
 class ImageOcclusion:
     card: Card
-    images: List[Path]
+    images: list[Path]
     tag: str
 
 
 @dataclass
 class BuildResult:
-    notes: List[RenderedNote] = field(default_factory=list)
-    occlusions: List[ImageOcclusion] = field(default_factory=list)
-    skipped: List[Card] = field(default_factory=list)
+    notes: list[RenderedNote] = field(default_factory=list)
+    occlusions: list[ImageOcclusion] = field(default_factory=list)
+    skipped: list[Card] = field(default_factory=list)
 
     @property
-    def media(self) -> List[Path]:
-        seen: List[Path] = []
+    def media(self) -> list[Path]:
+        seen: list[Path] = []
         for note in self.notes:
             seen.extend(p for p in note.media if p not in seen)
         return seen
 
 
-def build(cards: List[Card], diagnostics: List[Diagnostic], cloze_notes: bool = False) -> BuildResult:
+def resolve_image_path(card: Card, filename: str, vault_root: Path | None = None) -> Path | None:
+    """Search for the image in the note directory, common subfolders, and vault attachments."""
+    clean_name = Path(filename).name
+    candidates = [
+        card.file.parent / filename,
+        card.file.parent / clean_name,
+        card.file.parent / "attachments" / clean_name,
+        card.file.parent / "assets" / clean_name,
+        card.file.parent / "media" / clean_name,
+    ]
+    if vault_root and vault_root.is_dir():
+        candidates.extend([
+            vault_root / filename,
+            vault_root / clean_name,
+            vault_root / "attachments" / clean_name,
+            vault_root / "assets" / clean_name,
+            vault_root / "_resources" / clean_name,
+        ])
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+def build(
+    cards: list[Card],
+    diagnostics: list[Diagnostic] | None = None,
+    cloze_notes: bool = False,
+    vault_root: Path | None = None,
+) -> BuildResult:
     """``cloze_notes``: export 'Cloze' cards with {{c1::}} markers as real cloze notes (default: basic note)."""
+    diag_list = diagnostics if diagnostics is not None else []
     result = BuildResult()
     media_names = _MediaNames()
     for card in cards:
         try:
             if card.kind == KIND_IMAGE_OCCLUSION:
-                result.occlusions.append(_occlusion(card))
+                result.occlusions.append(_occlusion(card, vault_root))
             else:
-                note = _note(card, cloze_notes)
+                note = _note(card, cloze_notes, vault_root)
                 media_names.check(note)
-                _check_html(note, diagnostics)
+                _check_html(note, diag_list)
                 result.notes.append(note)
         except _Skip as skip:
-            diagnostics.extend(skip.diagnostics)
+            diag_list.extend(skip.diagnostics)
             result.skipped.append(card)
     return result
 
@@ -79,49 +109,55 @@ class _Skip(Exception):
         self.diagnostics = list(diagnostics)
 
 
-def _occlusion(card: Card) -> ImageOcclusion:
-    paths = [card.file.parent / name.strip() for name in IMAGE_RE.findall(card.answer)]
-    missing = [Diagnostic(card.file, card.line, LEVEL_ERROR, f"image not found: {p.name}")
-               for p in paths if not p.is_file()]
+def _occlusion(card: Card, vault_root: Path | None = None) -> ImageOcclusion:
+    raw_names = [name.strip() for name in IMAGE_RE.findall(card.answer)]
+    paths: list[Path] = []
+    missing: list[Diagnostic] = []
+    for name in raw_names:
+        resolved = resolve_image_path(card, name, vault_root)
+        if resolved is not None:
+            paths.append(resolved)
+        else:
+            missing.append(Diagnostic(card.file, card.line, LEVEL_ERROR, f"image not found: {name}"))
     if missing or not paths:
         raise _Skip(*missing)
     return ImageOcclusion(card, paths, card.tag)
 
 
-def _note(card: Card, cloze_notes: bool) -> RenderedNote:
+def _note(card: Card, cloze_notes: bool, vault_root: Path | None = None) -> RenderedNote:
     tags = [card.tag] if card.tag else []
     question, answer = card.question, card.answer
-    if card.has_code:
+    if card.has_code and CODE_TAG not in tags:
         tags.append(CODE_TAG)
         question = strip_keyword_lines(question, CODE_KEYWORDS)
         answer = strip_keyword_lines(answer, CODE_KEYWORDS)
 
     if card.kind == KIND_CLOZE:
-        text, media = _images(answer, card)
+        text, media = _images(answer, card, vault_root)
         if cloze_notes and card.has_cloze_markers:
-            return RenderedNote(card, MODEL_CLOZE, [render_markdown(text), ""], tags, media)
+            return RenderedNote(card, MODEL_CLOZE, [render_markdown(text), ""], tags, media, deck=card.deck)
         tags.append(CLOZE_TAG)
-        return RenderedNote(card, MODEL_BASIC, [render_markdown(text), ""], tags, media)
+        return RenderedNote(card, MODEL_BASIC, [render_markdown(text), ""], tags, media, deck=card.deck)
 
-    q_text, q_media = _images(question, card)
-    a_text, a_media = _images(answer, card)
+    q_text, q_media = _images(question, card, vault_root)
+    a_text, a_media = _images(answer, card, vault_root)
     media = q_media + [m for m in a_media if m not in q_media]
-    return RenderedNote(card, MODEL_BASIC, [render_markdown(q_text), render_markdown(a_text)], tags, media)
+    return RenderedNote(card, MODEL_BASIC, [render_markdown(q_text), render_markdown(a_text)], tags, media, deck=card.deck)
 
 
-def _images(text: str, card: Card) -> Tuple[str, List[Path]]:
-    """Replace ``![[name.png]]`` with <img> tags; the images must exist next to the note."""
-    media: List[Path] = []
-    missing: List[Diagnostic] = []
+def _images(text: str, card: Card, vault_root: Path | None = None) -> tuple[str, list[Path]]:
+    """Replace ``![[name.png]]`` with <img> tags; images are resolved from the note directory, attachments, or vault."""
+    media: list[Path] = []
+    missing: list[Diagnostic] = []
 
-    def repl(match: "re.Match[str]") -> str:
+    def repl(match: re.Match[str]) -> str:
         name = match.group(1).strip()
-        path = card.file.parent / name
-        if not path.is_file():
+        path = resolve_image_path(card, name, vault_root)
+        if path is None:
             missing.append(Diagnostic(card.file, card.line, LEVEL_ERROR, f"image not found next to the note: {name}"))
         elif path not in media:
             media.append(path)
-        return f'<img src="{name}">'
+        return f'<img src="{Path(name).name}">'
 
     text = IMAGE_RE.sub(repl, text)
     if missing:
@@ -134,7 +170,7 @@ class _MediaNames:
     each other. The second one is reported and its card skipped."""
 
     def __init__(self) -> None:
-        self.by_name: Dict[str, Path] = {}
+        self.by_name: dict[str, Path] = {}
 
     def check(self, note: RenderedNote) -> None:
         for path in note.media:
@@ -145,7 +181,7 @@ class _MediaNames:
                                        f"in {first.parent.name}; rename one of them"))
 
 
-def _check_html(note: RenderedNote, diagnostics: List[Diagnostic]) -> None:
+def _check_html(note: RenderedNote, diagnostics: list[Diagnostic]) -> None:
     """Warn about text a browser would swallow as a tag, e.g. ``<actual_type>`` written outside backticks."""
     for text in note.fields:
         unknown = sorted({m.group(1) for m in HTML_TAG_RE.finditer(text) if m.group(1).lower() not in KNOWN_HTML_TAGS})

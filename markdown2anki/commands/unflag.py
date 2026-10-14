@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import typer
 
@@ -15,8 +14,8 @@ from ._shared import COURSE_OPTION, YES_OPTION, load, rel, short_question
 
 def run(
     ctx: typer.Context,
-    course: Optional[str] = COURSE_OPTION,
-    file: Optional[Path] = typer.Option(None, "--file", help="Only this note."),
+    course: str | None = COURSE_OPTION,
+    file: Path | None = typer.Option(None, "--file", help="Only this note."),
     legacy: bool = typer.Option(False, "--legacy", help="Only old `ADDED: ` flags without an id."),
     yes: bool = YES_OPTION,
 ) -> int:

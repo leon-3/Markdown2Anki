@@ -73,3 +73,18 @@ def test_code_block_protects_headings_and_separators():
 def test_code_keyword_detected():
     cards, _ = parse("---\nq\n```c\n#CODE#\nint x;\n```\n")
     assert cards[0].has_code
+
+
+def test_fenced_code_block_in_answer_detected_as_code():
+    cards, _ = parse("---\nQuestion\n```python\ndef hello():\n    return 'world'\n```\n")
+    assert cards[0].has_code
+
+
+def test_fenced_code_block_in_question_detected_as_code():
+    cards, _ = parse("---\nWhat does this do?\nEQL: ```python\nEQL: print(1)\nEQL: ```\nAnswer\n")
+    assert cards[0].has_code
+
+
+def test_inline_code_not_detected_as_code():
+    cards, _ = parse("---\nQuestion\nUse `x = 1` here\n")
+    assert not cards[0].has_code

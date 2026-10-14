@@ -1,4 +1,4 @@
-"""Parse a markdown note into cards.
+"""Markdown note parser.
 
 Format (see README): cards are separated by a line of ``---``; the first line after it is the question
 (``EQL: `` lines continue it), everything else is the answer. Headings become tags. A question that is
@@ -9,23 +9,23 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 from .constants import CODE_KEYWORDS
 from .ids import parse_added
-
-HEADING_RE = re.compile(r"^(#+)\s+(.*)$")
-CLOZE_MARKER_RE = re.compile(r"\{\{c\d+::")
-FENCE_RE = re.compile(r"^\s*```")
-EQL_PREFIX = "EQL: "
 
 KIND_BASIC = "basic"
 KIND_CLOZE = "cloze"
 KIND_IMAGE_OCCLUSION = "image_occlusion"
 
-LEVEL_ERROR = "error"
-LEVEL_WARNING = "warning"
 LEVEL_INFO = "info"
+LEVEL_WARNING = "warning"
+LEVEL_ERROR = "error"
+
+EQL_PREFIX = "EQL: "
+HEADING_RE = re.compile(r"^(#+)\s*(.*?)\s*$")
+FENCE_RE = re.compile(r"^\s*```")
+FENCED_CODE_BLOCK_RE = re.compile(r"^[ \t]*```[^\n]*\n.*?^[ \t]*```[ \t]*$", re.MULTILINE | re.DOTALL)
+CLOZE_MARKER_RE = re.compile(r"\{\{c\d+::")
 
 
 @dataclass
@@ -45,9 +45,10 @@ class Card:
     tag: str  # merged hierarchical tag, e.g. SUTD::50.054_Compiler::Lectures::W01_Intro::Parsing
     kind: str = KIND_BASIC
     added: bool = False
-    card_id: Optional[str] = None
+    card_id: str | None = None
     has_code: bool = False
     has_cloze_markers: bool = False
+    deck: str | None = None
 
     @property
     def pending(self) -> bool:
@@ -67,33 +68,39 @@ class Card:
         return self.question.split("\n", 1)[0]
 
 
-def parse_file(path: Path, base_tag: str, diagnostics: List[Diagnostic]) -> List[Card]:
+def parse_file(
+    path: Path,
+    base_tag: str = "",
+    diagnostics: list[Diagnostic] | None = None,
+    file_tag: str | None = None,
+    deck: str | None = None,
+) -> list[Card]:
     text = path.read_text(encoding="utf-8")
-    return parse_lines(text.split("\n"), path, base_tag, diagnostics=diagnostics)
+    return parse_lines(text.split("\n"), path, base_tag, file_tag=file_tag, diagnostics=diagnostics, deck=deck)
 
 
-def parse_lines(lines: List[str], file: Path, base_tag: str, file_tag: Optional[str] = None,
-                diagnostics: Optional[List[Diagnostic]] = None) -> List[Card]:
+def parse_lines(lines: list[str], file: Path, base_tag: str, file_tag: str | None = None,
+                diagnostics: list[Diagnostic] | None = None, deck: str | None = None) -> list[Card]:
     """Parse the lines of one note. ``base_tag`` is the tag hierarchy above the file (may be empty)."""
     diagnostics = diagnostics if diagnostics is not None else []
-    tags: List[str] = [t for t in [base_tag, file_tag or file.stem] if t]
+    tags: list[str] = [t for t in [base_tag, file_tag or file.stem] if t]
     fixed_levels = len(tags)  # tags that headings must never pop
 
-    cards: List[Card] = []
+    cards: list[Card] = []
     expecting_question = False
     in_code_block = False
     question_line = 0
-    question: Optional[str] = None
+    question: str | None = None
     added = False
-    card_id: Optional[str] = None
-    answer_lines: List[str] = []
-    orphan_lines: List[Tuple[int, str]] = []  # (line number, text) outside any card
+    card_id: str | None = None
+    answer_lines: list[str] = []
+    orphan_lines: list[tuple[int, str]] = []  # (line number, text) outside any card
 
     def flush() -> None:
         nonlocal question, answer_lines, orphan_lines, added, card_id
         if question is not None:
             cards.append(_make_card(file, question_line, question, "\n".join(answer_lines), merge_tags(tags),
-                                    added, card_id, diagnostics))
+                                    added, card_id, diagnostics, deck=deck))
         elif any(text.strip() for _, text in orphan_lines):
             first = next(number for number, text in orphan_lines if text.strip())
             diagnostics.append(Diagnostic(file, first, LEVEL_ERROR, "text outside a card (no question line after '---')"))
@@ -132,15 +139,16 @@ def parse_lines(lines: List[str], file: Path, base_tag: str, file_tag: Optional[
     return cards
 
 
-def tags_after_heading(depth: int, text: str, tags: List[str], fixed_levels: int) -> List[str]:
-    """A heading of ``depth`` (# = 1) replaces every heading tag at that depth or deeper."""
-    keep = fixed_levels + depth - 1
-    return [*tags[:keep], text]
+# --- internal helpers -----------------------------------------------------------------------------
 
 
-def merge_tags(tags: List[str]) -> str:
-    """Join tag parts with ``::``. Spaces become underscores and a leading single digit is zero-padded
-    (``9 Foo`` -> ``09_Foo``) so tags sort naturally in Anki."""
+def tags_after_heading(depth: int, heading: str, tags: list[str], fixed_levels: int) -> list[str]:
+    """Heading at depth ``d`` keeps fixed tags plus ``d - 1`` ancestors, then appends the heading."""
+    return tags[:fixed_levels + depth - 1] + [heading]
+
+
+def merge_tags(tags: list[str]) -> str:
+    """``["SUTD", "50.054", "W01"]`` -> ``SUTD::50.054::W01``, zero-padding single-digit chapter numbers."""
     parts = []
     for tag in tags:
         if not tag:
@@ -152,7 +160,7 @@ def merge_tags(tags: List[str]) -> str:
 
 
 def _make_card(file: Path, line: int, question: str, answer: str, tag: str, added: bool,
-               card_id: Optional[str], diagnostics: List[Diagnostic]) -> Card:
+               card_id: str | None, diagnostics: list[Diagnostic], deck: str | None = None) -> Card:
     answer = _strip_trailing_blank_lines(answer)
     key = question.strip().lower()
     if key == "cloze":
@@ -162,7 +170,8 @@ def _make_card(file: Path, line: int, question: str, answer: str, tag: str, adde
     else:
         kind = KIND_BASIC
 
-    has_code = any(kw in question or kw in answer for kw in CODE_KEYWORDS)
+    has_code_block = bool(FENCED_CODE_BLOCK_RE.search(question) or FENCED_CODE_BLOCK_RE.search(answer))
+    has_code = has_code_block or any(kw in question or kw in answer for kw in CODE_KEYWORDS)
     has_markers = bool(CLOZE_MARKER_RE.search(answer))
 
     if kind == KIND_BASIC and has_markers:
@@ -174,7 +183,7 @@ def _make_card(file: Path, line: int, question: str, answer: str, tag: str, adde
         diagnostics.append(Diagnostic(file, line, LEVEL_WARNING, "card has an empty answer"))
 
     return Card(file=file, line=line, question=question, answer=answer, tag=tag, kind=kind, added=added,
-                card_id=card_id, has_code=has_code, has_cloze_markers=has_markers)
+                card_id=card_id, has_code=has_code, has_cloze_markers=has_markers, deck=deck)
 
 
 def _strip_trailing_blank_lines(text: str) -> str:

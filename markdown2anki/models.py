@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional
 
 import genanki
 
@@ -36,7 +35,7 @@ class Template:
 class BasicNote(genanki.Note):
     """Note whose GUID derives from the card id, so a re-import updates instead of duplicating."""
 
-    def __init__(self, *args, card_id: Optional[str] = None, **kwargs):
+    def __init__(self, *args, card_id: str | None = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.card_id = card_id
 
@@ -55,7 +54,7 @@ class ClozeNote(BasicNote):
         return genanki.guid_for(self.fields[0])
 
 
-def template_path(kind: str, name: str, templates_dir: Optional[Path]) -> Path:
+def template_path(kind: str, name: str, templates_dir: Path | None) -> Path:
     """The personal template file if it exists, else the bundled one."""
     if templates_dir is not None:
         personal = templates_dir / kind / name
@@ -64,13 +63,13 @@ def template_path(kind: str, name: str, templates_dir: Optional[Path]) -> Path:
     return BUNDLED_DIR / kind / name
 
 
-def subject_script(display: Dict[str, str]) -> str:
+def subject_script(display: dict[str, str]) -> str:
     script = (BUNDLED_DIR / "subject_script.html").read_text(encoding="utf-8")
     return script.replace("__M2A_SUBJECTS__", json.dumps(display, ensure_ascii=False))
 
 
-def load_template(kind: str, display: Optional[Dict[str, str]] = None,
-                  templates_dir: Optional[Path] = None) -> Template:
+def load_template(kind: str, display: dict[str, str] | None = None,
+                  templates_dir: Path | None = None) -> Template:
     script = subject_script(display or {})
 
     def read(name: str) -> str:
@@ -80,7 +79,7 @@ def load_template(kind: str, display: Optional[Dict[str, str]] = None,
     return Template(qfmt=read("front.html"), afmt=read("back.html"), css=read("styling.css"))
 
 
-def basic_model(display: Optional[Dict[str, str]] = None, templates_dir: Optional[Path] = None) -> genanki.Model:
+def basic_model(display: dict[str, str] | None = None, templates_dir: Path | None = None) -> genanki.Model:
     t = load_template(KIND_BASIC, display, templates_dir)
     return genanki.Model(
         BASIC_MODEL_ID, BASIC_MODEL_NAME,
@@ -90,11 +89,10 @@ def basic_model(display: Optional[Dict[str, str]] = None, templates_dir: Optiona
     )
 
 
-def cloze_model(display: Optional[Dict[str, str]] = None, templates_dir: Optional[Path] = None) -> genanki.Model:
+def cloze_model(display: dict[str, str] | None = None, templates_dir: Path | None = None) -> genanki.Model:
     t = load_template(KIND_CLOZE, display, templates_dir)
     return genanki.Model(
         CLOZE_MODEL_ID, CLOZE_MODEL_NAME,
-        model_type=genanki.Model.CLOZE,
         fields=[{"name": "Text", "font": "Arial"}, {"name": "Back Extra", "font": "Arial"}],
         templates=[{"name": "Cloze", "qfmt": t.qfmt, "afmt": t.afmt}],
         css=t.css,

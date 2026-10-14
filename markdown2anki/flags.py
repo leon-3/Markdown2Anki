@@ -2,20 +2,19 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 from .ids import flagged_line, parse_added
 from .parser import Card
 
 
-def clear_flags(cards: List[Card]) -> Tuple[int, List[str]]:
+def clear_flags(cards: list[Card]) -> tuple[int, list[str]]:
     """Remove the ADDED prefix from ``cards`` so they are exported again as new cards."""
-    by_file: Dict[Path, List[Card]] = {}
+    by_file: dict[Path, list[Card]] = {}
     for card in cards:
         by_file.setdefault(card.file, []).append(card)
 
     cleared = 0
-    problems: List[str] = []
+    problems: list[str] = []
     for path, entries in by_file.items():
         lines = path.read_text(encoding="utf-8").split("\n")
         changed = False
@@ -36,18 +35,18 @@ def clear_flags(cards: List[Card]) -> Tuple[int, List[str]]:
     return cleared, problems
 
 
-def write_flags(cards: List[Tuple[Card, str]]) -> Tuple[int, List[str]]:
+def write_flags(cards: list[tuple[Card, str]]) -> tuple[int, list[str]]:
     """Mark ``cards`` (paired with their new id) as added, grouped per file.
 
     Each line is checked against the parsed question before it is touched, so a note edited between
     parsing and flagging is reported instead of corrupted. Returns (flagged, problems).
     """
-    by_file: Dict[Path, List[Tuple[Card, str]]] = {}
+    by_file: dict[Path, list[tuple[Card, str]]] = {}
     for card, card_id in cards:
         by_file.setdefault(card.file, []).append((card, card_id))
 
     flagged = 0
-    problems: List[str] = []
+    problems: list[str] = []
     for path, entries in by_file.items():
         text = path.read_text(encoding="utf-8")
         lines = text.split("\n")

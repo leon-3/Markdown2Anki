@@ -1,9 +1,9 @@
 """Helpers shared by the subcommands: config access through the Typer context and diagnostic output."""
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional, Sequence
 
 import typer
 
@@ -19,8 +19,8 @@ YES_OPTION = typer.Option(False, "-y", "--yes", help="Do not ask for confirmatio
 
 @dataclass
 class GlobalOptions:
-    config: Optional[Path] = None
-    vault: Optional[Path] = None
+    config: Path | None = None
+    vault: Path | None = None
 
 
 def options(ctx: typer.Context) -> GlobalOptions:

@@ -176,7 +176,11 @@ cython_debug/
 # Project
 /input
 /output
+/occlusions
 *.apkg
 .env
 .DS_Store
-/m2a.toml
+m2a*.toml
+add_files_from_ltk.py
+.gemini/
+.agents/

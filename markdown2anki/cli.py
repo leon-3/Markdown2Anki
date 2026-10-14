@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import List, Optional
 
 import typer
 
@@ -30,10 +29,10 @@ def _version(value: bool) -> None:
 @app.callback()
 def main_options(
     ctx: typer.Context,
-    config: Optional[Path] = typer.Option(None, "-c", "--config",
-                                          help=f"Path to {CONFIG_FILE_NAME} (default: search upwards, then "
-                                               f"{user_config_path()})."),
-    vault: Optional[Path] = typer.Option(None, "--vault", help="Override the vault directory from the config."),
+    config: Path | None = typer.Option(None, "-c", "--config",
+                                       help=f"Path to {CONFIG_FILE_NAME} (default: search upwards, then "
+                                            f"{user_config_path()})."),
+    vault: Path | None = typer.Option(None, "--vault", help="Override the vault directory from the config."),
     trace: bool = typer.Option(False, "--trace", help="Log each phase to stderr (also: M2A_TRACE=1)."),
     version: bool = typer.Option(False, "--version", callback=_version, is_eager=True, help="Show the version."),
 ) -> None:
@@ -53,7 +52,7 @@ app.command("templates", help="Compare the local card templates with the note ty
                               "(AnkiConnect).")(templates.run)
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     """Run the app and translate everything into an exit code (used by the ``m2a`` script and the tests)."""
     try:
         sys.stdout.reconfigure(line_buffering=True)  # show output promptly even through a pipe

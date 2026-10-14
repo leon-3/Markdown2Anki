@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import sys
 import time
-from typing import List, Optional, Sequence
+from collections.abc import Sequence
 
 import questionary
 from rich import box
@@ -25,13 +25,13 @@ console = Console(highlight=False, soft_wrap=True, width=None if sys.stdout.isat
 stderr = Console(stderr=True, highlight=False, soft_wrap=True)
 
 _trace_enabled = bool(os.environ.get("M2A_TRACE"))
-_trace_start: Optional[float] = None
+_trace_start: float | None = None
 
 
 # --- output ---------------------------------------------------------------------------------------
 
 
-def error(message: str, hint: Optional[str] = None) -> None:
+def error(message: str, hint: str | None = None) -> None:
     stderr.print(f"[red]error[/] {escape(message)}")
     if hint:
         stderr.print(f"[dim]hint[/]  {escape(hint)}")
@@ -101,7 +101,7 @@ def ask_path(question: str, default: str = "") -> str:
 
 
 def ask_checkbox(question: str, choices: Sequence[str], checked: Sequence[str],
-                 labels: Optional[Sequence[str]] = None) -> List[str]:
+                 labels: Sequence[str] | None = None) -> list[str]:
     """Multi-select; returns the chosen ``choices`` (``labels`` are what is displayed)."""
     items = [questionary.Choice(label, value=value, checked=value in checked)
              for value, label in zip(choices, labels or choices)]

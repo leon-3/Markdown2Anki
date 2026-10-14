@@ -1,18 +1,14 @@
-"""The ``m2a.toml`` configuration: where it lives, how it is loaded and how ``m2a init`` writes it."""
+"""Read, validate, and write m2a.toml."""
 from __future__ import annotations
 
 import json
 import os
 import re
+import tomllib
 from dataclasses import dataclass, field, fields
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # Python < 3.11
-    import tomli as tomllib
+from typing import Any
 
 CONFIG_FILE_NAME = "m2a.toml"
 
@@ -55,11 +51,12 @@ class Config:
     anki_cloze_model: str = "M2A Cloze"
     cloze_notes: bool = False  # True: 'Cloze' cards with {{c1::}} markers become real cloze notes
     templates_dir: Path = field(default_factory=user_templates_dir)  # personal card templates
-    ignore: List[str] = field(default_factory=lambda: list(DEFAULT_IGNORE))
-    subjects: Dict[str, str] = field(default_factory=dict)  # course folder -> tag; empty = every folder
-    subdirectories: Dict[str, str] = field(default_factory=lambda: dict(DEFAULT_SUBDIRECTORIES))
-    display: Dict[str, str] = field(default_factory=dict)  # tag -> title shown on the card
-    source: Optional[Path] = None  # where the config was loaded from
+    ignore: list[str] = field(default_factory=lambda: list(DEFAULT_IGNORE))
+    subjects: dict[str, str] = field(default_factory=dict)  # course folder -> tag; empty = every folder
+    subdirectories: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_SUBDIRECTORIES))
+    display: dict[str, str] = field(default_factory=dict)  # tag -> title shown on the card
+    decks: dict[str, str] = field(default_factory=dict)  # folder/course -> specific deck name
+    source: Path | None = None  # where the config was loaded from
 
     def __post_init__(self) -> None:
         self.vault = Path(self.vault).expanduser()
@@ -74,7 +71,7 @@ class Config:
     def apkg_path(self) -> Path:
         return self.output_dir / f"{self.package_name}.apkg"
 
-    def subject_tag(self, folder_name: str) -> Optional[str]:
+    def subject_tag(self, folder_name: str) -> str | None:
         """Tag for a top-level vault folder, or None if the folder is not a course."""
         if folder_name in self.ignore:
             return None
@@ -82,8 +79,16 @@ class Config:
             return self.subjects.get(folder_name)
         return sanitize_tag(folder_name)
 
+    def resolve_deck(self, course_or_folder: str = "") -> str:
+        """Resolve deck name from [decks] mapping, template, or default deck."""
+        if course_or_folder and course_or_folder in self.decks:
+            return self.decks[course_or_folder]
+        if "{course}" in self.deck and course_or_folder:
+            return self.deck.replace("{course}", self.subject_tag(course_or_folder) or course_or_folder)
+        return self.deck
+
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], source: Path) -> "Config":
+    def from_dict(cls, data: dict[str, Any], source: Path) -> Config:
         """Build a Config from parsed TOML. Relative paths are taken relative to the config file."""
         if not data.get("vault"):
             raise ValueError(f"{source}: 'vault' is required")
@@ -108,7 +113,7 @@ def sanitize_tag(name: str) -> str:
     return re.sub(r"_+", "_", tag)
 
 
-def find_config(start: Optional[Path] = None) -> Optional[Path]:
+def find_config(start: Path | None = None) -> Path | None:
     """Walk up from ``start`` (default: cwd) looking for m2a.toml, then fall back to the user config."""
     current = Path(start or os.getcwd()).resolve()
     for candidate in [current, *current.parents]:
@@ -119,7 +124,7 @@ def find_config(start: Optional[Path] = None) -> Optional[Path]:
     return user if user.is_file() else None
 
 
-def load_config(path: Optional[Path] = None) -> Config:
+def load_config(path: Path | None = None) -> Config:
     """Load m2a.toml from ``path`` or from the usual lookup places."""
     if path is None:
         path = find_config()
@@ -135,7 +140,7 @@ def load_config(path: Optional[Path] = None) -> Config:
 
 def config_from_env(path: Path) -> Config:
     """Read the pre-CLI ``.env`` format (KEY=VALUE with JSON blobs); used by ``m2a init`` for migration."""
-    values: Dict[str, str] = {}
+    values: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         key, sep, value = line.strip().partition("=")
         if sep and not key.startswith("#"):
@@ -160,7 +165,9 @@ def render_toml(cfg: Config) -> str:
     def quote(value: Any) -> str:
         return json.dumps(str(value), ensure_ascii=False)
 
-    def table(name: str, mapping: Dict[str, str], comment: str) -> List[str]:
+    def table(name: str, mapping: dict[str, str], comment: str) -> list[str]:
+        if not mapping:
+            return []
         return [f"# {comment}", f"[{name}]", *(f"{quote(k)} = {quote(v)}" for k, v in mapping.items()), ""]
 
     lines = [
@@ -198,5 +205,7 @@ def render_toml(cfg: Config) -> str:
                "Folder inside a course -> tag. Notes in any other subfolder are reported and skipped."),
         *table("display", cfg.display,
                "Tag -> title shown in the corner of the card. First match wins; list specific tags first."),
+        *table("decks", cfg.decks,
+               "Course or folder -> specific deck name override."),
     ]
     return "\n".join(lines)

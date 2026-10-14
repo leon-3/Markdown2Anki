@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import html
 import re
-from typing import Dict, List, Tuple
 
 import markdown
 
@@ -23,12 +22,14 @@ from .formatting import (
     standardize_html,
 )
 
-FENCED_CODE_RE = re.compile(r"^[ \t]*```([\w+-]*)[ \t]*\n(.*?)^[ \t]*```[ \t]*$", re.MULTILINE | re.DOTALL)
+FENCED_CODE_RE = re.compile(r"^[ \t]*```([^\n]*)\n(.*?)^[ \t]*```[ \t]*$", re.MULTILINE | re.DOTALL)
 INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
 DISPLAY_MATH_RE = re.compile(r"\$\$(.+?)\$\$", re.DOTALL)
 # Pandoc-style inline math: no space right after the opening $ or before the closing one, and the closing
 # $ must not be followed by a digit -> "$5 and $10" is prose, "$x$" is math. No newlines inside.
 INLINE_MATH_RE = re.compile(r"(?<![\\$])\$(?=\S)((?:[^$\n\\]|\\.)+?)(?<=\S)\$(?![\d$])")
+
+URL_RE = re.compile(r"https?://[^\s<>\"\'\`]+", re.IGNORECASE)
 
 TOKEN_FMT = "M2ASTASH{}X"
 TOKEN_RE = re.compile(r"M2ASTASH(\d+)X")
@@ -36,7 +37,7 @@ TOKEN_RE = re.compile(r"M2ASTASH(\d+)X")
 
 class _Stash:
     def __init__(self) -> None:
-        self.items: List[Tuple[str, str, bool]] = []  # (kind, replacement html, is_block)
+        self.items: list[tuple[str, str, bool]] = []  # (kind, replacement html, is_block)
 
     def put(self, kind: str, replacement: str, block: bool) -> str:
         self.items.append((kind, replacement, block))
@@ -50,8 +51,8 @@ def _math(text: str) -> str:
 
 
 def _stash_code_and_math(text: str, stash: _Stash) -> str:
-    def fenced(match: "re.Match[str]") -> str:
-        lang, code = match.group(1), match.group(2)
+    def fenced(match: re.Match[str]) -> str:
+        lang, code = match.group(1).strip(), match.group(2)
         cls = f' class="language-{lang}"' if lang else ""
         body = html.escape(code.rstrip("\n"))
         return stash.put("code", f"<pre><code{cls}>{body}</code></pre>", block=True)
@@ -62,6 +63,37 @@ def _stash_code_and_math(text: str, stash: _Stash) -> str:
                                text)
     text = INLINE_MATH_RE.sub(lambda m: stash.put("math", "\\(" + _math(m.group(1)) + "\\)", False), text)
     return text
+
+
+def autolink_bare_urls(html_text: str) -> str:
+    """Turn bare http(s) URLs into <a href="..."> links outside of existing <a> tags and HTML markup."""
+    def repl_text(chunk: str) -> str:
+        def repl(m: re.Match[str]) -> str:
+            url = m.group(0)
+            trailing = ""
+            while url and url[-1] in ".,;:!?)":
+                if url[-1] == ")" and url.count("(") >= url.count(")"):
+                    break
+                trailing = url[-1] + trailing
+                url = url[:-1]
+            return f'<a href="{url}">{url}</a>{trailing}'
+        return URL_RE.sub(repl, chunk)
+
+    parts = re.split(r"(<[^>]+>)", html_text)
+    in_a = False
+    for i, part in enumerate(parts):
+        if not part:
+            continue
+        if part.startswith("<"):
+            lower = part.lower()
+            if lower.startswith("<a ") or lower == "<a>":
+                in_a = True
+            elif lower.startswith("</a"):
+                in_a = False
+        else:
+            if not in_a:
+                parts[i] = repl_text(part)
+    return "".join(parts)
 
 
 def _restore(html_text: str, stash: _Stash) -> str:
@@ -88,12 +120,13 @@ def render_markdown(text: str) -> str:
     html_text = remove_trailing_new_lines(html_text)
     html_text = standardize_html(html_text)
     html_text = remove_trailing_br_tags(html_text)
+    html_text = autolink_bare_urls(html_text)
     html_text = _restore(html_text, stash)
     html_text = ignore_image_resizing_in_html(html_text)
     return html_text
 
 
-def strip_keyword_lines(text: str, keywords: List[str]) -> str:
+def strip_keyword_lines(text: str, keywords: list[str]) -> str:
     """Remove lines that consist only of a keyword such as ``#CODE#`` (markdown, before rendering)."""
     kept = [line for line in text.split("\n") if line.strip() not in keywords]
     return "\n".join(kept)

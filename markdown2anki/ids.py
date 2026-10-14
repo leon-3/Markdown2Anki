@@ -16,7 +16,6 @@ from __future__ import annotations
 import re
 import secrets
 import string
-from typing import Optional, Tuple
 
 _ALPHABET = string.digits + string.ascii_lowercase
 ID_LENGTH = 6
@@ -26,7 +25,7 @@ TRAILING_ID_RE = re.compile(r"\s*%%(?P<id>[0-9a-z]{4,12})%%\s*$")
 MARKER_RE = re.compile(r"\s*<!--m2a:[0-9a-z]+-->")
 
 
-def parse_added(line: str) -> Tuple[bool, Optional[str], str]:
+def parse_added(line: str) -> tuple[bool, str | None, str]:
     """Return (is_added, card_id, question_text_without_markers)."""
     match = ADDED_PREFIX_RE.match(line)
     if not match:
@@ -48,7 +47,7 @@ def flagged_line(question: str, card_id: str) -> str:
     return f"ADDED: {question} %%{card_id}%%"
 
 
-def is_anki_note_id(card_id: Optional[str]) -> bool:
+def is_anki_note_id(card_id: str | None) -> bool:
     return bool(card_id) and card_id.startswith("n") and card_id[1:].isdigit()
 
 

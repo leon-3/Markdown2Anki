@@ -1,3 +1,4 @@
+import re
 import shutil
 from pathlib import Path
 
@@ -262,7 +263,8 @@ def test_init_wizard_answers(tmp_path, answers):
 
 def test_no_arguments_prints_help(capsys):
     assert run() == 0
-    assert "Usage: m2a" in capsys.readouterr().out
+    out = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", capsys.readouterr().out)
+    assert "Usage: m2a" in out
 
 
 def test_unknown_setting_is_rejected(tmp_path):
@@ -274,3 +276,162 @@ def test_unknown_setting_is_rejected(tmp_path):
 def test_version(capsys):
     assert run("--version") == 0
     assert capsys.readouterr().out.startswith("m2a ")
+
+
+def test_sync_staged_occlusions_with_ankiconnect(vault, capsys, monkeypatch, tmp_path):
+    v, cfg_path = vault
+    lec = v / "50.054 Compiler" / "Anki - Lectures"
+    img = lec / "diag.png"
+    img.write_bytes(b"fake image data")
+    occ_note = lec / "Occlusion.md"
+    occ_note.write_text("---\nImage Cloze\n![[diag.png]]\n", encoding="utf-8")
+
+    cfg_text = cfg_path.read_text(encoding="utf-8").replace('target = "apkg"', 'target = "anki"')
+    cfg_path.write_text(cfg_text, encoding="utf-8")
+
+    from markdown2anki.export import ankiconnect
+
+    def mock_invoke(self, action, **params):
+        if action == "version":
+            return 6
+        if action == "modelNamesAndIds":
+            return {"M2A Basic": 1, "M2A Cloze": 2}
+        if action == "findNotes":
+            return []
+        if action == "storeMediaFile":
+            return None
+        if action == "addNotes":
+            return [101] * len(params.get("notes", []))
+        return None
+
+    monkeypatch.setattr(ankiconnect.AnkiConnect, "invoke", mock_invoke)
+
+    assert run("-c", cfg_path, "sync", "--dry-run") == 0
+    out = capsys.readouterr().out
+    assert "Image Cloze" in out
+    assert "image occlusions 1" in out
+
+    assert run("-c", cfg_path, "sync", "--yes") == 0
+    out = capsys.readouterr().out
+    assert "staged 1 image occlusion(s)" in out
+
+    occ_dir = tmp_path / "out" / "occlusions"
+    assert occ_dir.is_dir()
+    copied = list(occ_dir.rglob("diag.png"))
+    assert len(copied) == 1
+    assert copied[0].read_bytes() == b"fake image data"
+
+    assert "ADDED: Image Cloze" in occ_note.read_text(encoding="utf-8")
+
+
+def test_templates_diff_and_push(vault, capsys, monkeypatch):
+    v, cfg_path = vault
+    from markdown2anki.export import ankiconnect
+
+    pushed_templates = []
+    pushed_styling = []
+
+    def mock_invoke(self, action, **params):
+        if action == "version":
+            return 6
+        if action == "modelNamesAndIds":
+            return {"M2A Basic": 1, "M2A Cloze": 2}
+        if action == "modelTemplates":
+            return {"Card 1": {"Front": "outdated front", "Back": "outdated back"}}
+        if action == "modelStyling":
+            return {"css": "outdated css"}
+        if action == "updateModelTemplates":
+            pushed_templates.append(params)
+            return None
+        if action == "updateModelStyling":
+            pushed_styling.append(params)
+            return None
+        return None
+
+    monkeypatch.setattr(ankiconnect.AnkiConnect, "invoke", mock_invoke)
+
+    # 1. diff only
+    assert run("-c", cfg_path, "templates", "--diff") == 0
+    out = capsys.readouterr().out
+    assert "differs: front, back, styling" in out
+    assert len(pushed_templates) == 0
+
+    # 2. push with --yes
+    assert run("-c", cfg_path, "templates", "--yes") == 0
+    out = capsys.readouterr().out
+    assert "pushed front, back, styling" in out
+    assert len(pushed_templates) > 0
+    assert len(pushed_styling) > 0
+
+
+def test_non_ascii_and_umlauts_in_notes_and_tags(tmp_path, capsys):
+    v = tmp_path / "vault"
+    course_dir = v / "Einführung in die Informatik" / "Anki - Vorlesung"
+    course_dir.mkdir(parents=True)
+    note_file = course_dir / "01. Wahrscheinlichkeitstheorie (Einführung) & Logik.md"
+    note_file.write_text(
+        "---\n"
+        "# Maß- und Wahrscheinlichkeitsräume\n"
+        "---\n"
+        "Was ist ein Ereignisraum $\\mathcal{A}$?\n"
+        "Ein Mengensystem über $\\Omega$.\n",
+        encoding="utf-8",
+    )
+    cfg = Config(
+        vault=v,
+        package_name="UmlautTest",
+        base_tag="Uni_München",
+        output_dir=tmp_path / "out",
+        target="apkg",
+        subdirectories={"Anki - Vorlesung": "Vorlesung"},
+    )
+    cfg_path = tmp_path / "m2a.toml"
+    cfg_path.write_text(render_toml(cfg), encoding="utf-8")
+
+    assert run("-c", cfg_path, "sync", "--yes") == 0
+    out = capsys.readouterr().out
+    assert "flagged 1 card(s)" in out
+
+    assert (tmp_path / "out" / "UmlautTest.apkg").is_file()
+    text = note_file.read_text(encoding="utf-8")
+    assert "ADDED: Was ist ein Ereignisraum" in text
+
+
+def test_sync_recovers_from_missing_media(tmp_path, capsys):
+    v = tmp_path / "vault"
+    course_dir = v / "Algorithms" / "Anki - Lectures"
+    course_dir.mkdir(parents=True)
+    note_file = course_dir / "Graph.md"
+    note_file.write_text(
+        "---\n"
+        "Valid Q1?\n"
+        "Valid A1\n"
+        "---\n"
+        "Image Cloze\n"
+        "![[missing_image_xyz.png]]\n"
+        "---\n"
+        "Valid Q2?\n"
+        "Valid A2\n",
+        encoding="utf-8",
+    )
+    cfg = Config(
+        vault=v,
+        package_name="MissingMediaTest",
+        base_tag="CS",
+        output_dir=tmp_path / "out",
+        target="apkg",
+    )
+    cfg_path = tmp_path / "m2a.toml"
+    cfg_path.write_text(render_toml(cfg), encoding="utf-8")
+
+    assert run("-c", cfg_path, "sync", "--yes") == 0
+    out = capsys.readouterr().out
+    assert "image not found: missing_image_xyz.png" in out
+    assert "skipped 1" in out
+    assert "flagged 2 card(s)" in out
+    assert (tmp_path / "out" / "MissingMediaTest.apkg").is_file()
+
+    text = note_file.read_text(encoding="utf-8")
+    assert "ADDED: Valid Q1?" in text
+    assert "ADDED: Valid Q2?" in text
+    assert "ADDED: Image Cloze" not in text

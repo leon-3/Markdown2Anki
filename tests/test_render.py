@@ -6,6 +6,11 @@ def test_fenced_code_keeps_arrows_and_language():
     assert html == '<pre><code class="language-cpp">auto x = ptr-&gt;value; // a =&gt; b</code></pre>'
 
 
+def test_fenced_code_supports_languages_with_special_chars():
+    html = render_markdown("```c#\nint x = 1;\n```")
+    assert html == '<pre><code class="language-c#">int x = 1;</code></pre>'
+
+
 def test_inline_code_is_untouched():
     html = render_markdown("Use `a -> b` here -> there")
     assert "<code>a -&gt; b</code>" in html
@@ -44,3 +49,38 @@ def test_math_escapes_html_characters():
 def test_math_glued_to_a_word_and_stray_dollar():
     assert render_markdown("Sind$\\sum a_k$ und") == "Sind\\(\\sum a_k\\) und"
     assert render_markdown("$$$x$$") == "\\[x\\]"
+
+
+def test_bare_url_autolinking():
+    html = render_markdown("Visit https://example.com and http://test.org/path?a=1&b=2 for info.")
+    assert '<a href="https://example.com">https://example.com</a>' in html
+    assert '<a href="http://test.org/path?a=1&amp;b=2">http://test.org/path?a=1&amp;b=2</a>' in html
+
+
+def test_bare_url_punctuation_handling():
+    html = render_markdown("See (https://example.com/foo), or https://example.com/bar! Also https://en.wikipedia.org/wiki/Function_(mathematics).")
+    assert '(<a href="https://example.com/foo">https://example.com/foo</a>),' in html
+    assert '<a href="https://example.com/bar">https://example.com/bar</a>!' in html
+    assert '<a href="https://en.wikipedia.org/wiki/Function_(mathematics)">https://en.wikipedia.org/wiki/Function_(mathematics)</a>.' in html
+
+
+def test_markdown_link_preserved_and_not_double_linked():
+    html = render_markdown("Check [Google](https://google.com) and https://bare.com")
+    assert '<a href="https://google.com">Google</a>' in html
+    assert '<a href="https://bare.com">https://bare.com</a>' in html
+
+
+def test_urls_in_code_and_math_not_autolinked():
+    html = render_markdown("`https://code.example.com` and\n```python\n# https://fenced.example.com\n```\nand $https://math.example.com$")
+    assert "<code>https://code.example.com</code>" in html
+    assert "# https://fenced.example.com" in html
+    assert "\\(https://math.example.com\\)" in html
+    assert '<a href="https://code.example.com">' not in html
+    assert '<a href="https://fenced.example.com">' not in html
+    assert '<a href="https://math.example.com">' not in html
+
+
+def test_wikilinks_untouched():
+    html = render_markdown("See [[Some Note]] and [[Other Note|Alias]]")
+    assert "[[Some Note]]" in html
+    assert "[[Other Note|Alias]]" in html

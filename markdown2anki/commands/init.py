@@ -7,8 +7,8 @@ the pre-filled values are used as they are.
 from __future__ import annotations
 
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
 
 import typer
 
@@ -25,11 +25,11 @@ SUBDIR_PREFIX = "Anki - "
 
 def run(
     ctx: typer.Context,
-    vault: Optional[Path] = typer.Option(None, "--vault", help="Obsidian vault folder."),
-    deck: Optional[str] = typer.Option(None, "--deck", help="Anki deck name (use :: for subdecks)."),
-    base_tag: Optional[str] = typer.Option(None, "--base-tag", help="Tag prepended to every card."),
-    target: Optional[Target] = typer.Option(None, "--target", help="Default export target."),
-    output_dir: Optional[Path] = typer.Option(None, "--output-dir", help="Where .apkg files are written."),
+    vault: Path | None = typer.Option(None, "--vault", help="Obsidian vault folder."),
+    deck: str | None = typer.Option(None, "--deck", help="Anki deck name (use :: for subdecks)."),
+    base_tag: str | None = typer.Option(None, "--base-tag", help="Tag prepended to every card."),
+    target: Target | None = typer.Option(None, "--target", help="Default export target."),
+    output_dir: Path | None = typer.Option(None, "--output-dir", help="Where .apkg files are written."),
     here: bool = typer.Option(False, "--here", help=f"Write ./{CONFIG_FILE_NAME} instead of the user config "
                                                      f"{user_config_path()}."),
     force: bool = typer.Option(False, "--force", help="Overwrite an existing config (keeps a .bak copy)."),
@@ -77,7 +77,7 @@ def _seed() -> Config:
     return Config(vault=Path("."))
 
 
-def _target_path(explicit: Optional[Path], here: bool) -> Path:
+def _target_path(explicit: Path | None, here: bool) -> Path:
     if explicit:
         return explicit
     return Path(CONFIG_FILE_NAME) if here else user_config_path()
@@ -93,7 +93,7 @@ def _section(title: str, interactive: bool) -> None:
         console.print(f"  [dim]{title}[/]")
 
 
-def _ask_vault(preset: Optional[Path], interactive: bool) -> Optional[Path]:
+def _ask_vault(preset: Path | None, interactive: bool) -> Path | None:
     _section("Vault", interactive)
     default = str(preset) if preset else ""
     while True:
@@ -109,11 +109,11 @@ def _ask_vault(preset: Optional[Path], interactive: bool) -> Optional[Path]:
             return None
 
 
-def _course_folders(vault: Path, ignore: Sequence[str]) -> List[str]:
+def _course_folders(vault: Path, ignore: Sequence[str]) -> list[str]:
     return sorted(p.name for p in vault.iterdir() if p.is_dir() and not p.name.startswith(".") and p.name not in ignore)
 
 
-def _ask_subjects(courses: List[str], seed: Dict[str, str], interactive: bool) -> Dict[str, str]:
+def _ask_subjects(courses: list[str], seed: dict[str, str], interactive: bool) -> dict[str, str]:
     """Which top-level folders are courses, and the tag each one gets."""
     _section("Courses (top-level folders of the vault)", interactive)
     chosen = [c for c in courses if c in seed] or courses
@@ -122,11 +122,11 @@ def _ask_subjects(courses: List[str], seed: Dict[str, str], interactive: bool) -
     return {folder: _ask_tag(folder, seed.get(folder) or _suggest_course_tag(folder), interactive) for folder in chosen}
 
 
-def _ask_subdirectories(vault: Path, subjects: Dict[str, str], seed: Dict[str, str],
-                        interactive: bool) -> Dict[str, str]:
+def _ask_subdirectories(vault: Path, subjects: dict[str, str], seed: dict[str, str],
+                        interactive: bool) -> dict[str, str]:
     """Which folders inside the courses hold notes, and the tag each one gets."""
     _section("Note folders (inside each course)", interactive)
-    found: Dict[str, int] = {}
+    found: dict[str, int] = {}
     for course in subjects:
         for sub in (vault / course).iterdir():
             if sub.is_dir() and not sub.name.startswith("."):

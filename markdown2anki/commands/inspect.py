@@ -1,7 +1,5 @@
-"""Read-only commands: ``config``, ``check`` and ``status``."""
+"""``m2a config``, ``m2a check`` and ``m2a status``: read-only inspection commands."""
 from __future__ import annotations
-
-from typing import Dict, List, Optional
 
 import typer
 
@@ -26,12 +24,12 @@ def config(ctx: typer.Context) -> int:
 
 def check(
     ctx: typer.Context,
-    course: Optional[str] = COURSE_OPTION,
+    course: str | None = COURSE_OPTION,
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Also list every card."),
 ) -> int:
     cfg = load(ctx)
     collected = collect(cfg, course)
-    result = build(collected.pending, collected.diagnostics, cfg.cloze_notes)
+    result = build(collected.pending, collected.diagnostics, cfg.cloze_notes, vault_root=cfg.vault)
 
     ui.header("m2a check", str(cfg.vault))
     console.print(INDENT + ui.kv([("notes", len(collected.sources)), ("cards", len(collected.cards)),
@@ -46,10 +44,10 @@ def check(
     return 1 if errors else 0
 
 
-def status(ctx: typer.Context, course: Optional[str] = COURSE_OPTION) -> int:
+def status(ctx: typer.Context, course: str | None = COURSE_OPTION) -> int:
     cfg = load(ctx)
     collected = collect(cfg, course)
-    counts: Dict[str, List[int]] = {source.group: [0, 0, 0] for source in collected.sources}
+    counts: dict[str, list[int]] = {source.group: [0, 0, 0] for source in collected.sources}
     group_of = {source.path: source.group for source in collected.sources}
     for card in collected.cards:
         row = counts[group_of[card.file]]
@@ -58,10 +56,9 @@ def status(ctx: typer.Context, course: Optional[str] = COURSE_OPTION) -> int:
 
     ui.header("m2a status", str(cfg.vault))
     rows = [[escape(group), str(total), str(added), f"[green]{pending}[/]" if pending else "[dim]0[/]"]
-            for group, (total, added, pending) in counts.items()]
-    totals = [sum(row[i] for row in counts.values()) for i in range(3)]
-    rows.append(["[bold]all[/]", *(f"[bold]{t}[/]" for t in totals)])
-    console.print(ui.table(["course / folder", "total", "added", "pending"], rows, align_right=[1, 2, 3]))
-    if collected.problems:
-        console.print(f"  {summary_line(collected.problems)}  [dim]- run `m2a check`[/]")
+            for group, (total, added, pending) in sorted(counts.items())]
+    if rows:
+        console.print(ui.table(["group", "cards", "added", "pending"], rows))
+    else:
+        console.print("  [dim]no courses or notes found[/]")
     return 0

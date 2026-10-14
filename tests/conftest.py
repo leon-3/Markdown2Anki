@@ -1,6 +1,8 @@
+from pathlib import Path
 import pytest
 
 from markdown2anki import ui
+from markdown2anki.export import ankiconnect
 
 
 @pytest.fixture(autouse=True)
@@ -27,3 +29,36 @@ def answers(monkeypatch):
         return queue
 
     return script
+
+
+class FakeAnki:
+    """Records AnkiConnect calls; answers the few queries the exporter makes."""
+
+    def __init__(self, models, found=None):
+        self.models = models  # name -> id
+        self.found = found or {}  # marker id -> note id
+        self.calls = []
+
+    def invoke(self, action, **params):
+        self.calls.append((action, params))
+        if action == "modelNamesAndIds":
+            return dict(self.models)
+        if action == "addNotes":
+            return [1000 + i if n["fields"].get("Front", "x") else None for i, n in enumerate(params["notes"])]
+        if action == "createModel":
+            self.models[params["modelName"]] = 1
+        if action == "findNotes":
+            return [nid for cid, nid in self.found.items() if f"m2a:{cid}-->" in params["query"]]
+        return None
+
+    def params(self, action):
+        return [p for a, p in self.calls if a == action]
+
+
+@pytest.fixture
+def anki(monkeypatch):
+    def install(models, found=None):
+        fake = FakeAnki(models, found)
+        monkeypatch.setattr(ankiconnect.AnkiConnect, "invoke", lambda self, action, **p: fake.invoke(action, **p))
+        return fake
+    return install
