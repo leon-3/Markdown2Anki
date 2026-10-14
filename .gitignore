@@ -1,5 +1,4 @@
-# Byte-compiled / optimized / DLLsudo mount -t ntfs-3g /dev/sda2 /mnt/external
- files
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
@@ -174,14 +173,10 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-# Package
+# Project
 /input
 /output
 *.apkg
-/markdown2anki/NoteTypes/Basic/front.html
-/markdown2anki/NoteTypes/Basic/styling.css
-/markdown2anki/NoteTypes/Basic/back.html
-/markdown2anki/NoteTypes/Cloze/back.html
-/markdown2anki/NoteTypes/Cloze/front.html
-/markdown2anki/NoteTypes/Cloze/styling.css
-add_files_from_ltk.py
+.env
+.DS_Store
+/m2a.toml

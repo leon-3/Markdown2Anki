@@ -1,3 +1,7 @@
-from .main import file_to_preprocessed_cards, create_cards, create_package
-from .helpers.image_processor import ImageProcessor
-from .helpers.file_post_processor import add_added_flags_to_each_valid_card
+"""Markdown2Anki: turn Obsidian flashcard notes into Anki cards. Command line entry point: ``m2a``."""
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("markdown2anki")
+except PackageNotFoundError:  # running from a checkout without `pip install -e .`
+    __version__ = "0.0.0"

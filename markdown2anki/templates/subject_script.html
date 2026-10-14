@@ -1,0 +1,11 @@
+<script>
+  // Tag -> title shown in the corner of the card. Generated from m2a.toml [display]; first match wins.
+  var subjects = __M2A_SUBJECTS__;
+  var tags = "{{Tags}}";
+  for (var key in subjects) {
+    if (key !== "" && tags.includes(key)) {
+      document.getElementById("subject").innerText = subjects[key];
+      break;
+    }
+  }
+</script>
