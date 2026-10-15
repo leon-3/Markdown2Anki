@@ -16,7 +16,10 @@ def clear_flags(cards: list[Card]) -> tuple[int, list[str]]:
     cleared = 0
     problems: list[str] = []
     for path, entries in by_file.items():
-        lines = path.read_text(encoding="utf-8").split("\n")
+        with open(path, "r", encoding="utf-8", newline="") as f:
+            text = f.read()
+        newline = "\r\n" if "\r\n" in text else "\n"
+        lines = text.split(newline)
         changed = False
         for card in entries:
             index = card.line - 1
@@ -31,7 +34,8 @@ def clear_flags(cards: list[Card]) -> tuple[int, list[str]]:
             changed = True
             cleared += 1
         if changed:
-            path.write_text("\n".join(lines), encoding="utf-8")
+            with open(path, "w", encoding="utf-8", newline="") as f:
+                f.write(newline.join(lines))
     return cleared, problems
 
 
@@ -48,8 +52,10 @@ def write_flags(cards: list[tuple[Card, str]]) -> tuple[int, list[str]]:
     flagged = 0
     problems: list[str] = []
     for path, entries in by_file.items():
-        text = path.read_text(encoding="utf-8")
-        lines = text.split("\n")
+        with open(path, "r", encoding="utf-8", newline="") as f:
+            text = f.read()
+        newline = "\r\n" if "\r\n" in text else "\n"
+        lines = text.split(newline)
         changed = False
         for card, card_id in entries:
             index = card.line - 1
@@ -66,5 +72,6 @@ def write_flags(cards: list[tuple[Card, str]]) -> tuple[int, list[str]]:
             changed = True
             flagged += 1
         if changed:
-            path.write_text("\n".join(lines), encoding="utf-8")
+            with open(path, "w", encoding="utf-8", newline="") as f:
+                f.write(newline.join(lines))
     return flagged, problems

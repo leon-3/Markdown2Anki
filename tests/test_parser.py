@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from markdown2anki.parser import KIND_BASIC, KIND_CLOZE, KIND_IMAGE_OCCLUSION, parse_lines
+from markdown2anki.flags import clear_flags, write_flags
+from markdown2anki.parser import KIND_BASIC, KIND_CLOZE, KIND_IMAGE_OCCLUSION, parse_file, parse_lines
 
 F = Path("W01 Intro.md")
 
@@ -88,3 +89,101 @@ def test_fenced_code_block_in_question_detected_as_code():
 def test_inline_code_not_detected_as_code():
     cards, _ = parse("---\nQuestion\nUse `x = 1` here\n")
     assert not cards[0].has_code
+
+
+def test_yaml_frontmatter_is_ignored_and_not_parsed_as_card(tmp_path):
+    note = tmp_path / "note.md"
+    note.write_text(
+        "---\n"
+        "tags: [math, probability]\n"
+        "aliases: [PT]\n"
+        "date: 2026-10-15\n"
+        "---\n"
+        "# Probability Theory\n"
+        "---\n"
+        "What is a sample space?\n"
+        "The set of all possible outcomes.\n",
+        encoding="utf-8",
+    )
+    cards = parse_file(note, "Base")
+    assert len(cards) == 1
+    assert cards[0].question == "What is a sample space?"
+    assert cards[0].answer == "The set of all possible outcomes."
+    # Line 1: ---, 2: tags, 3: aliases, 4: date, 5: ---, 6: # ..., 7: ---, 8: Question
+    assert cards[0].line == 8
+
+
+def test_file_without_frontmatter_works_normally(tmp_path):
+    # Scenario 1: Note starting with a heading, then separator
+    note1 = tmp_path / "with_heading.md"
+    note1.write_text(
+        "# Discrete Mathematics\n"
+        "---\n"
+        "What is a bijection?\n"
+        "A function that is both injective and surjective.\n",
+        encoding="utf-8",
+    )
+    cards1 = parse_file(note1, "Base")
+    assert len(cards1) == 1
+    assert cards1[0].line == 3
+    assert cards1[0].question == "What is a bijection?"
+    assert cards1[0].tag == "Base::with_heading::Discrete_Mathematics"
+
+    # Scenario 2: Note starting directly with --- as the very first line (no frontmatter)
+    note2 = tmp_path / "starts_with_separator.md"
+    note2.write_text(
+        "---\n"
+        "Question 1\n"
+        "Answer 1\n"
+        "---\n"
+        "Question 2\n"
+        "Answer 2\n",
+        encoding="utf-8",
+    )
+    cards2 = parse_file(note2, "Base")
+    assert len(cards2) == 2
+    assert cards2[0].line == 2
+    assert cards2[0].question == "Question 1"
+    assert cards2[1].line == 5
+    assert cards2[1].question == "Question 2"
+
+    # Flagging and unflagging work without issue
+    flagged, problems = write_flags([(cards2[0], "c11111"), (cards2[1], "c22222")])
+    assert flagged == 2 and not problems
+    reloaded = parse_file(note2, "Base")
+    assert [c.added for c in reloaded] == [True, True]
+    assert [c.card_id for c in reloaded] == ["c11111", "c22222"]
+
+    cleared, problems = clear_flags(reloaded)
+    assert cleared == 2 and not problems
+    assert [c.added for c in parse_file(note2, "Base")] == [False, False]
+
+
+def test_crlf_line_endings_preserved_when_flagging(tmp_path):
+    note = tmp_path / "crlf_note.md"
+    content = "---\r\nQuestion 1\r\nAnswer 1\r\n---\r\nQuestion 2\r\nAnswer 2\r\n"
+    note.write_bytes(content.encode("utf-8"))
+
+    cards = parse_file(note, "Base")
+    assert len(cards) == 2
+    assert cards[0].line == 2
+    assert cards[1].line == 5
+
+    flagged, problems = write_flags([(cards[0], "abc123")])
+    assert flagged == 1 and not problems
+
+    # File must still strictly use CRLF line endings
+    raw = note.read_bytes()
+    assert b"\r\n" in raw
+    # Every line must end in CRLF, no bare LF
+    lines = raw.split(b"\r\n")
+    assert not any(b"\n" in l for l in lines)
+    assert b"ADDED: Question 1 %%abc123%%" in raw
+
+    # Clearing flags should also preserve CRLF
+    cards_reloaded = parse_file(note, "Base")
+    cleared, problems = clear_flags([cards_reloaded[0]])
+    assert cleared == 1 and not problems
+    raw_cleared = note.read_bytes()
+    assert b"\r\n" in raw_cleared
+    assert not any(b"\n" in l for l in raw_cleared.split(b"\r\n"))

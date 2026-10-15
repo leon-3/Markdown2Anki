@@ -26,6 +26,7 @@ HEADING_RE = re.compile(r"^(#+)\s*(.*?)\s*$")
 FENCE_RE = re.compile(r"^\s*```")
 FENCED_CODE_BLOCK_RE = re.compile(r"^[ \t]*```[^\n]*\n.*?^[ \t]*```[ \t]*$", re.MULTILINE | re.DOTALL)
 CLOZE_MARKER_RE = re.compile(r"\{\{c\d+::")
+YAML_LINE_RE = re.compile(r"^([a-zA-Z0-9_-]+\s*:|\s*-\s+|\s+[^\n]*|\s*#|\s*$)")
 
 
 @dataclass
@@ -75,8 +76,26 @@ def parse_file(
     file_tag: str | None = None,
     deck: str | None = None,
 ) -> list[Card]:
-    text = path.read_text(encoding="utf-8")
-    return parse_lines(text.split("\n"), path, base_tag, file_tag=file_tag, diagnostics=diagnostics, deck=deck)
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        text = f.read()
+    newline = "\r\n" if "\r\n" in text else "\n"
+    return parse_lines(text.split(newline), path, base_tag, file_tag=file_tag, diagnostics=diagnostics, deck=deck)
+
+
+def _find_frontmatter_end(lines: list[str]) -> int:
+    """Return the 1-based line number of the closing '---' of YAML frontmatter, or 0 if none."""
+    if not lines or lines[0].strip() != "---":
+        return 0
+    has_key_value = False
+    for i in range(1, len(lines)):
+        line = lines[i]
+        if line.strip() in ("---", "..."):
+            return i + 1 if has_key_value else 0
+        if not YAML_LINE_RE.match(line):
+            return 0
+        if re.match(r"^[a-zA-Z0-9_-]+\s*:", line):
+            has_key_value = True
+    return 0
 
 
 def parse_lines(lines: list[str], file: Path, base_tag: str, file_tag: str | None = None,
@@ -106,7 +125,12 @@ def parse_lines(lines: list[str], file: Path, base_tag: str, file_tag: str | Non
             diagnostics.append(Diagnostic(file, first, LEVEL_ERROR, "text outside a card (no question line after '---')"))
         question, answer_lines, orphan_lines, added, card_id = None, [], [], False, None
 
+    frontmatter_end = _find_frontmatter_end(lines)
+
     for index, line in enumerate(lines, start=1):
+        if index <= frontmatter_end:
+            continue
+
         if FENCE_RE.match(line):
             in_code_block = not in_code_block
 

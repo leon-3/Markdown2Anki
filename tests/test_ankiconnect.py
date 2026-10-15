@@ -12,21 +12,29 @@ from markdown2anki.parser import Card
 class FakeAnki:
     """Records AnkiConnect calls; answers the few queries the exporter makes."""
 
-    def __init__(self, models, found=None):
+    def __init__(self, models, found=None, tags=None, field_names=None):
         self.models = models  # name -> id
         self.found = found or {}  # marker id -> note id
+        self.tags = tags or {}  # note_id -> list of tags
+        self.field_names = field_names or {}  # model_name -> list of field names
         self.calls = []
 
     def invoke(self, action, **params):
         self.calls.append((action, params))
+        if action == "multi":
+            return [self.invoke(a["action"], **a.get("params", {})) for a in params.get("actions", [])]
         if action == "modelNamesAndIds":
             return dict(self.models)
         if action == "addNotes":
-            return [1000 + i if n["fields"].get("Front", "x") else None for i, n in enumerate(params["notes"])]
+            return [1000 + i if next(iter(n["fields"].values()), "") else None for i, n in enumerate(params["notes"])]
         if action == "createModel":
             self.models[params["modelName"]] = 1
         if action == "findNotes":
             return [nid for cid, nid in self.found.items() if f"m2a:{cid}-->" in params["query"]]
+        if action == "getNoteTags":
+            return list(self.tags.get(params.get("note"), []))
+        if action == "modelFieldNames":
+            return list(self.field_names.get(params.get("modelName"), []))
         return None
 
     def params(self, action):
@@ -35,8 +43,8 @@ class FakeAnki:
 
 @pytest.fixture
 def anki(monkeypatch):
-    def install(models, found=None):
-        fake = FakeAnki(models, found)
+    def install(models, found=None, tags=None, field_names=None):
+        fake = FakeAnki(models, found, tags, field_names)
         monkeypatch.setattr(ankiconnect.AnkiConnect, "invoke", lambda self, action, **p: fake.invoke(action, **p))
         return fake
     return install
@@ -46,8 +54,8 @@ def _card(line, added=False, card_id=None):
     return Card(file=Path("n.md"), line=line, question="q", answer="a", tag="T", added=added, card_id=card_id)
 
 
-def _note(card, front="q", back="a"):
-    return RenderedNote(card, "basic", [front, back], ["T"])
+def _note(card, front="q", back="a", tags=None):
+    return RenderedNote(card, "basic", [front, back], tags if tags is not None else ["T"])
 
 
 def test_uses_the_imported_note_type_by_id_even_if_name_collides(anki):
@@ -127,3 +135,77 @@ def test_template_status_and_push(anki):
     update = fake.params("updateModelTemplates")[0]["model"]
     assert update["name"] == "Basic" and "Compiler" in update["templates"]["Card 1"]["Front"]
     assert fake.params("updateModelStyling")
+
+
+def test_ankiconnect_removes_stale_tags_on_update(anki):
+    fake = anki(
+        {"Basic": 1234},
+        found={"tag123": 888},
+        tags={888: ["TagA", "OldTagToRemove"]},
+    )
+    cfg = Config(vault=Path("."), deck="D")
+    note = _note(_card(3, added=True, card_id="tag123"), tags=["TagA", "NewTagToAdd"])
+    export = ankiconnect.export_ankiconnect(BuildResult(notes=[note]), cfg, [])
+    assert export.updated == 1
+
+    removals = fake.params("removeTags")
+    assert len(removals) == 1
+    assert removals[0]["notes"] == [888] and removals[0]["tags"] == "OldTagToRemove"
+
+    additions = fake.params("addTags")
+    assert len(additions) == 1
+    assert additions[0]["notes"] == [888] and additions[0]["tags"] == "NewTagToAdd"
+
+
+def test_ankiconnect_supports_custom_model_field_names(anki):
+    fake = anki(
+        {"CustomBasic": 1234},
+        found={"custom1": 999},
+        field_names={"CustomBasic": ["Question", "Answer"]},
+    )
+    cfg = Config(vault=Path("."), deck="D", anki_basic_model="CustomBasic")
+
+    new_note = _note(_card(3), front="What is X?", back="Y")
+    updated_note = _note(_card(7, added=True, card_id="custom1"), front="Q updated", back="A updated")
+
+    export = ankiconnect.export_ankiconnect(BuildResult(notes=[new_note, updated_note]), cfg, [])
+    assert export.added == 1 and export.updated == 1
+
+    # Check new note payload used custom field names
+    added_payload = fake.params("addNotes")[0]["notes"][0]
+    assert "Question" in added_payload["fields"]
+    assert added_payload["fields"]["Question"] == "What is X?"
+    assert "Answer" in added_payload["fields"]
+    assert "Front" not in added_payload["fields"]
+
+    # Check update payload used custom field names
+    updated_payload = fake.params("updateNoteFields")[0]["note"]
+    assert updated_payload["id"] == 999
+    assert "Question" in updated_payload["fields"]
+    assert updated_payload["fields"]["Question"] == "Q updated"
+    assert "Answer" in updated_payload["fields"]
+    assert "Front" not in updated_payload["fields"]
+
+
+def test_ankiconnect_batches_updates_via_multi(anki):
+    fake = anki(
+        {"Basic": 1234},
+        found={"id1": 101, "id2": 102},
+        tags={101: ["Old1"], 102: ["Old2"]},
+    )
+    cfg = Config(vault=Path("."), deck="D")
+    note1 = _note(_card(1, added=True, card_id="id1"), front="Q1", back="A1", tags=["New1"])
+    note2 = _note(_card(2, added=True, card_id="id2"), front="Q2", back="A2", tags=["New2"])
+    export = ankiconnect.export_ankiconnect(BuildResult(notes=[note1, note2]), cfg, [])
+    assert export.updated == 2
+
+    # Check multi was invoked
+    multi_calls = fake.params("multi")
+    assert len(multi_calls) == 2  # 1 for getNoteTags batch, 1 for update/tags batch
+
+    # Check the update actions in the second multi call
+    update_batch = multi_calls[1]["actions"]
+    action_names = [a["action"] for a in update_batch]
+    assert action_names.count("updateNoteFields") == 2
+    assert action_names.count("removeTags") == 2
+    assert action_names.count("addTags") == 2

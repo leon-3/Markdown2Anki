@@ -10,7 +10,7 @@ from .constants import CLOZE_TAG, CODE_KEYWORDS, CODE_TAG
 from .parser import KIND_CLOZE, KIND_IMAGE_OCCLUSION, LEVEL_ERROR, LEVEL_WARNING, Card, Diagnostic
 from .render import render_markdown, strip_keyword_lines
 
-IMAGE_RE = re.compile(r"!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]")
+IMAGE_RE = re.compile(r"!\[\[([^\]|]+)(?:\|([^\]]*))?\]\]")
 HTML_TAG_RE = re.compile(r"</?([A-Za-z][\w-]*)[^<>]*>")
 KNOWN_HTML_TAGS = {
     "a", "abbr", "audio", "b", "blockquote", "br", "code", "col", "colgroup", "dd", "del", "div", "dl", "dt",
@@ -110,7 +110,7 @@ class _Skip(Exception):
 
 
 def _occlusion(card: Card, vault_root: Path | None = None) -> ImageOcclusion:
-    raw_names = [name.strip() for name in IMAGE_RE.findall(card.answer)]
+    raw_names = [m.group(1).strip() for m in IMAGE_RE.finditer(card.answer)]
     paths: list[Path] = []
     missing: list[Diagnostic] = []
     for name in raw_names:
@@ -157,7 +157,21 @@ def _images(text: str, card: Card, vault_root: Path | None = None) -> tuple[str,
             missing.append(Diagnostic(card.file, card.line, LEVEL_ERROR, f"image not found next to the note: {name}"))
         elif path not in media:
             media.append(path)
-        return f'<img src="{Path(name).name}">'
+
+        attrs = f'src="{Path(name).name}"'
+        if match.group(2):
+            parts = [p.strip() for p in match.group(2).split("|") if p.strip()]
+            for part in parts:
+                dim_match = re.match(r"^(\d+)(?:x(\d+))?$", part, re.IGNORECASE)
+                if dim_match:
+                    width = dim_match.group(1)
+                    height = dim_match.group(2)
+                    if height:
+                        attrs += f' width="{width}" height="{height}"'
+                    else:
+                        attrs += f' width="{width}"'
+                    break
+        return f"<img {attrs}>"
 
     text = IMAGE_RE.sub(repl, text)
     if missing:

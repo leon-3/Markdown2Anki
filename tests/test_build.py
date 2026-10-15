@@ -60,6 +60,28 @@ def test_resolve_image_in_attachments_folder(tmp_path):
     assert '<img src="diagram.png">' in result.notes[0].fields[1]
 
 
+def test_obsidian_image_resizing(tmp_path):
+    note_dir = tmp_path / "notes"
+    att_dir = note_dir / "attachments"
+    att_dir.mkdir(parents=True)
+    (att_dir / "schema.png").write_bytes(b"img")
+
+    # Width only
+    cards = _cards(tmp_path, "notes", "---\nQ1\n![[schema.png|400]]\n")
+    res = build(cards, [])
+    assert '<img src="schema.png" width="400">' in res.notes[0].fields[1]
+
+    # Width and height
+    cards2 = _cards(tmp_path, "notes", "---\nQ2\n![[schema.png|400x200]]\n")
+    res2 = build(cards2, [])
+    assert '<img src="schema.png" width="400" height="200">' in res2.notes[0].fields[1]
+
+    # Multiple pipe tags e.g. alt text and width
+    cards3 = _cards(tmp_path, "notes", "---\nQ3\n![[schema.png|my alt|300]]\n")
+    res3 = build(cards3, [])
+    assert '<img src="schema.png" width="300">' in res3.notes[0].fields[1]
+
+
 def test_fenced_code_block_gets_code_tag(tmp_path):
     cards = _cards(tmp_path, "notes", "---\nQuestion\n```python\nprint('hello')\n```\n")
     result = build(cards, [])

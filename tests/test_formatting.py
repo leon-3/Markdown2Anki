@@ -1,6 +1,12 @@
-from markdown2anki.formatting import (format_bullet_points, html_new_line_processor, ignore_image_resizing_in_html,
-                                      remove_trailing_br_tags, remove_trailing_new_lines, replace_symbols,
-                                      standardize_bullet_indentation, standardize_html)
+from markdown2anki.formatting import (
+    format_bullet_points,
+    html_new_line_processor,
+    remove_trailing_br_tags,
+    remove_trailing_new_lines,
+    replace_symbols,
+    standardize_bullet_indentation,
+    standardize_html,
+)
 
 
 def test_replace_symbols():
@@ -28,7 +34,3 @@ def test_trailing_clean_up():
 def test_standardize_html():
     assert standardize_html("<p><strong>x</strong></p>") == "<b>x</b>"
     assert standardize_html("<p>a</p>\n<p>b</p>") == "<p>a</p>\n<p>b</p>"
-
-
-def test_image_resizing_is_dropped():
-    assert ignore_image_resizing_in_html("![[a.png|300]]") == "![[a.png]]"

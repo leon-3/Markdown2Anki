@@ -14,7 +14,6 @@ import markdown
 from .formatting import (
     format_bullet_points,
     html_new_line_processor,
-    ignore_image_resizing_in_html,
     remove_trailing_br_tags,
     remove_trailing_new_lines,
     replace_symbols,
@@ -122,7 +121,6 @@ def render_markdown(text: str) -> str:
     html_text = remove_trailing_br_tags(html_text)
     html_text = autolink_bare_urls(html_text)
     html_text = _restore(html_text, stash)
-    html_text = ignore_image_resizing_in_html(html_text)
     return html_text
 
 

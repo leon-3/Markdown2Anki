@@ -69,8 +69,3 @@ def remove_trailing_br_tags(text: str) -> str:
     while text.endswith("<br>"):
         text = text[:-4]
     return text
-
-
-def ignore_image_resizing_in_html(text: str) -> str:
-    """Strip Obsidian's ``|300`` size suffix from image links."""
-    return re.sub(r"\|[0-9]+]]", "]]", text)

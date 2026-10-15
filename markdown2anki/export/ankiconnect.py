@@ -58,6 +58,12 @@ class AnkiConnect:
     def model_names_by_id(self) -> dict[int, str]:
         return {int(model_id): name for name, model_id in self.invoke("modelNamesAndIds").items()}
 
+    def model_field_names(self, model_name: str) -> list[str]:
+        try:
+            return self.invoke("modelFieldNames", modelName=model_name) or []
+        except (AnkiConnectError, Exception):
+            return []
+
     def create_model(self, kind: str, name: str, template: Template) -> None:
         if kind == KIND_CLOZE:
             self.invoke("createModel", modelName=name, inOrderFields=["Text", "Back Extra"], css=template.css,
@@ -70,7 +76,7 @@ class AnkiConnect:
         self.invoke("createDeck", deck=name)
 
     def store_media(self, notes: list[RenderedNote]) -> int:
-        seen = set()
+        seen: set[Path] = set()
         for note in notes:
             for path in note.media:
                 if path in seen:
@@ -82,6 +88,8 @@ class AnkiConnect:
 
     def find_note(self, field_name: str, card_id: str) -> int | None:
         ids = self.invoke("findNotes", query=search_query(field_name, card_id)) or []
+        if not ids:
+            ids = self.invoke("findNotes", query=f'"*m2a:{card_id}-->*"') or []
         return ids[0] if ids else None
 
 
@@ -156,24 +164,27 @@ class AnkiExport:
     flags: Flags = field(default_factory=list)  # (card, id) pairs to write back into the notes
 
 
+def _model_kind(model: str) -> str:
+    return KIND_CLOZE if model == MODEL_CLOZE else KIND_BASIC
+
+
 def _back_field(note: RenderedNote) -> str:
     return "Back Extra" if note.model == MODEL_CLOZE else "Back"
 
 
-def _fields(note: RenderedNote, card_id: str) -> dict[str, str]:
+def _fields(note: RenderedNote, card_id: str, front_name: str = "Front", back_name: str = "Back") -> dict[str, str]:
     back = with_marker(note.fields[1], card_id)
-    if note.model == MODEL_CLOZE:
-        return {"Text": note.fields[0], "Back Extra": back}
-    return {"Front": note.fields[0], "Back": back}
+    return {front_name: note.fields[0], back_name: back}
 
 
-def _locate_update(client: AnkiConnect, note: RenderedNote) -> tuple[int | None, str]:
+def _locate_update(client: AnkiConnect, note: RenderedNote, back_field: str | None = None) -> tuple[int | None, str]:
     """(Anki note id, card id to use) for an already exported card. Cards flagged by an older version with
     Anki's note id are migrated to a short id, which is embedded now and written back afterwards."""
     card_id = note.card.card_id
     if is_anki_note_id(card_id):
         return anki_note_id(card_id), new_card_id()
-    return client.find_note(_back_field(note), card_id), card_id
+    field = back_field or _back_field(note)
+    return client.find_note(field, card_id), card_id
 
 
 def export_ankiconnect(
@@ -206,9 +217,21 @@ def export_ankiconnect(
     models = resolve_model_names(client, cfg, basic_name, cloze_name)
     existing = set(client.invoke("modelNamesAndIds"))
     needed = {KIND_BASIC} | ({KIND_CLOZE} if any(n.model == MODEL_CLOZE for n in result.notes) else set())
+
     for kind in needed:
         if models[kind] not in existing:
             client.create_model(kind, models[kind], load_template(kind, disp, tpl_dir))
+
+    # Determine dynamic field names for the models (defaults: Front/Back, Text/Back Extra)
+    model_field_names: dict[str, tuple[str, str]] = {}
+    for kind, model_name in models.items():
+        names = client.model_field_names(model_name)
+        if len(names) >= 2:
+            model_field_names[kind] = (names[0], names[1])
+        elif kind == KIND_CLOZE:
+            model_field_names[kind] = ("Text", "Back Extra")
+        else:
+            model_field_names[kind] = ("Front", "Back")
 
     to_add: list[tuple[RenderedNote, str]] = []
     to_update: list[tuple[RenderedNote, str, int]] = []
@@ -216,7 +239,9 @@ def export_ankiconnect(
         if not note.card.updatable:
             to_add.append((note, new_card_id()))
             continue
-        note_id, card_id = _locate_update(client, note)
+        kind = _model_kind(note.model)
+        _, back_name = model_field_names.get(kind, ("Front", "Back"))
+        note_id, card_id = _locate_update(client, note, back_field=back_name)
         if note_id is None:
             diag_list.append(Diagnostic(note.card.file, note.card.line, LEVEL_WARNING,
                                         "not found in Anki (deleted, other profile, or exported before ids "
@@ -228,19 +253,69 @@ def export_ankiconnect(
     export = AnkiExport()
     export.media_count = client.store_media([n for n, _ in to_add] + [n for n, _, _ in to_update])
 
-    for note, card_id, note_id in to_update:
-        client.invoke("updateNoteFields", note={"id": note_id, "fields": _fields(note, card_id)})
-        client.invoke("addTags", notes=[note_id], tags=" ".join(note.tags))
-        if card_id != note.card.card_id:
-            export.flags.append((note.card, card_id))
-        export.updated += 1
+    if to_update:
+        tag_actions = [{"action": "getNoteTags", "params": {"note": note_id}} for _, _, note_id in to_update]
+        tag_results = client.invoke("multi", actions=tag_actions)
+        if not isinstance(tag_results, list) or len(tag_results) != len(to_update):
+            tag_results = [client.invoke("getNoteTags", note=note_id) for _, _, note_id in to_update]
+
+        update_actions: list[dict[str, Any]] = []
+        for (note, card_id, note_id), raw_tags in zip(to_update, tag_results):
+            kind = _model_kind(note.model)
+            front_name, back_name = model_field_names.get(kind, ("Front", "Back"))
+            update_actions.append({
+                "action": "updateNoteFields",
+                "params": {"note": {"id": note_id, "fields": _fields(note, card_id, front_name, back_name)}},
+            })
+
+            # Synchronize tags: remove stale tags and add fresh tags
+            existing_tags = set(raw_tags or [])
+            wanted_tags = set(note.tags)
+            to_remove = existing_tags - wanted_tags
+            to_add_tags = wanted_tags - existing_tags
+            if to_remove:
+                update_actions.append({
+                    "action": "removeTags",
+                    "params": {"notes": [note_id], "tags": " ".join(to_remove)},
+                })
+            if to_add_tags:
+                update_actions.append({
+                    "action": "addTags",
+                    "params": {"notes": [note_id], "tags": " ".join(to_add_tags)},
+                })
+            elif not existing_tags and wanted_tags:
+                update_actions.append({
+                    "action": "addTags",
+                    "params": {"notes": [note_id], "tags": " ".join(wanted_tags)},
+                })
+
+            if card_id != note.card.card_id:
+                export.flags.append((note.card, card_id))
+            export.updated += 1
+
+        if update_actions:
+            res = client.invoke("multi", actions=update_actions)
+            if res is None:
+                for act in update_actions:
+                    client.invoke(act["action"], **act.get("params", {}))
 
     if to_add:
         model_names = {MODEL_CLOZE: models[KIND_CLOZE]}
-        payloads = [{"deckName": n.deck or default_deck_name,
-                     "modelName": model_names.get(n.model, models[KIND_BASIC]),
-                     "fields": _fields(n, cid), "tags": n.tags, "options": {"allowDuplicate": True}}
-                    for n, cid in to_add]
+        payloads = [
+            {
+                "deckName": n.deck or default_deck_name,
+                "modelName": model_names.get(n.model, models[KIND_BASIC]),
+                "fields": _fields(
+                    n,
+                    cid,
+                    model_field_names.get(_model_kind(n.model), ("Front", "Back"))[0],
+                    model_field_names.get(_model_kind(n.model), ("Front", "Back"))[1],
+                ),
+                "tags": n.tags,
+                "options": {"allowDuplicate": True},
+            }
+            for n, cid in to_add
+        ]
 
         target_decks = {p["deckName"] for p in payloads}
         for d in target_decks:
