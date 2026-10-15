@@ -94,3 +94,41 @@ def test_inline_code_does_not_get_code_tag(tmp_path):
     result = build(cards, [])
     assert len(result.notes) == 1
     assert CODE_TAG not in result.notes[0].tags
+
+
+def test_export_occlusions_single_folder_sequential_names(tmp_path):
+    from markdown2anki.export.apkg import export_occlusions
+    from markdown2anki.build import ImageOcclusion
+    from markdown2anki.parser import Card
+
+    img1 = tmp_path / "img1.png"
+    img2 = tmp_path / "img2.jpg"
+    img3 = tmp_path / "img3.png"
+    img1.write_bytes(b"data1")
+    img2.write_bytes(b"data2")
+    img3.write_bytes(b"data3")
+
+    c1 = Card(file=tmp_path / "n1.md", line=1, question="Image Cloze", answer="", tag="Uni::Math::Probability")
+    c2 = Card(file=tmp_path / "n2.md", line=1, question="Image Cloze", answer="", tag="Uni::Math::Analysis")
+
+    occlusions = [
+        ImageOcclusion(card=c1, images=[img1, img2], tag=c1.tag),
+        ImageOcclusion(card=c2, images=[img3], tag=c2.tag),
+    ]
+
+    out_dir, flags, staged = export_occlusions(occlusions, tmp_path, prefix="TESTHEX8")
+
+    assert out_dir == tmp_path / "occlusions"
+    assert len(flags) == 2
+    assert "Uni::Math::Probability" in staged
+    assert "Uni::Math::Analysis" in staged
+
+    # Sequential numbering
+    assert staged["Uni::Math::Probability"] == ["TESTHEX8_01.png", "TESTHEX8_02.jpg"]
+    assert staged["Uni::Math::Analysis"] == ["TESTHEX8_03.png"]
+
+    # All files exist directly in out_dir
+    assert (out_dir / "TESTHEX8_01.png").is_file()
+    assert (out_dir / "TESTHEX8_02.jpg").is_file()
+    assert (out_dir / "TESTHEX8_03.png").is_file()
+    assert (out_dir / "TESTHEX8_01.png").read_bytes() == b"data1"

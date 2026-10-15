@@ -33,6 +33,10 @@ if __name__ == "__main__":
     print(f"\nCreated package '{out_file}' with {export.note_count} notes and {export.media_count} media files.")
     if export.occlusion_dir and result.occlusions:
         print(f"Staged {len(result.occlusions)} image occlusion(s) to '{export.occlusion_dir}'.")
+        for tag, filenames in export.staged_occlusions.items():
+            print(f"\n{tag}")
+            for fname in filenames:
+                print(f"- {fname}")
     if export.flags:
         flagged, problems = write_flags(export.flags)
         if flagged:

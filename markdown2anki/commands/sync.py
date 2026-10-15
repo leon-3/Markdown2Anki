@@ -74,6 +74,14 @@ def _print_counts(result: BuildResult) -> None:
                                   ("skipped", len(result.skipped))]))
 
 
+def _print_staged_occlusions(staged: dict[str, list[str]]) -> None:
+    for tag, filenames in staged.items():
+        console.print()
+        console.print(f"  [bold cyan]{escape(tag)}[/]")
+        for fname in filenames:
+            console.print(f"  - {escape(fname)}")
+
+
 def _export(target: str, result: BuildResult, cfg: Config, output: Path | None,
             diagnostics: list[Diagnostic]) -> Flags | None:
     """Run the exporter and report; None when it failed."""
@@ -87,18 +95,19 @@ def _export(target: str, result: BuildResult, cfg: Config, output: Path | None,
                       f"in deck [bold]{escape(cfg.deck)}[/]  [dim]{export.media_count} media files[/]")
         if result.occlusions:
             base_dir = output.parent if output else cfg.output_dir
-            occ_dir, occ_flags = export_occlusions(result.occlusions, base_dir)
+            occ_dir, occ_flags, staged = export_occlusions(result.occlusions, base_dir)
             export.flags.extend(occ_flags)
             console.print(f"  [green]✓[/] staged [bold]{len(result.occlusions)}[/] image occlusion(s) to "
-                          f"[bold]{escape(str(occ_dir))}[/]  [dim](one folder per tag)[/]")
+                          f"[bold]{escape(str(occ_dir))}[/]")
+            _print_staged_occlusions(staged)
         return export.flags
 
     export = export_apkg(result, output or cfg.apkg_path, cfg=cfg)
     console.print(f"  [green]✓[/] wrote [bold]{escape(str(export.path))}[/]  "
                   f"[dim]deck {escape(cfg.deck)}, {export.note_count} notes, {export.media_count} media files[/]")
-    if export.occlusion_dir:
-        console.print(f"  [dim]image occlusion sources:[/] {escape(str(export.occlusion_dir))}  "
-                      f"[dim](one folder per tag)[/]")
+    if export.occlusion_dir and export.staged_occlusions:
+        console.print(f"  [dim]image occlusion sources:[/] {escape(str(export.occlusion_dir))}")
+        _print_staged_occlusions(export.staged_occlusions)
     return export.flags
 
 

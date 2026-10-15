@@ -148,7 +148,7 @@ void quicksort(int *arr, int low, int high) { ... }
    - When `cloze_notes = false`, exported as a basic card tagged with `TODO_PROCESS_CLOZES`.
 6. **Image Occlusion**:
    - Start the question with `Image Cloze` and place `![[diagram.png]]` in the answer.
-   - Source images are staged into `<output_dir>/occlusions/<tag>/` for easy creation in Anki.
+   - Source images are staged into `<output_dir>/occlusions/` with sequential IDs, and a summary grouped by tag is printed to the terminal.
 7. **Code**: Code blocks containing `#CODE#` are automatically tagged with `TODO_PROCESS_CODE`, and the marker is stripped.
 8. **Math**: Single dollar `$x$` produces inline KaTeX math; `$$...$$` produces display math. Literal currency amounts like `$5 and $10` are recognized as prose and untouched.
 

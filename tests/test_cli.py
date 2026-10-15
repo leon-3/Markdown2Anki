@@ -317,9 +317,11 @@ def test_sync_staged_occlusions_with_ankiconnect(vault, capsys, monkeypatch, tmp
 
     occ_dir = tmp_path / "out" / "occlusions"
     assert occ_dir.is_dir()
-    copied = list(occ_dir.rglob("diag.png"))
+    copied = list(occ_dir.glob("*.png"))
     assert len(copied) == 1
+    assert copied[0].name.endswith("_01.png")
     assert copied[0].read_bytes() == b"fake image data"
+    assert copied[0].name in out
 
     assert "ADDED: Image Cloze" in occ_note.read_text(encoding="utf-8")
 

@@ -35,5 +35,7 @@ def test_basic_adding_from_input_with_occlusion_and_tag(tmp_path, monkeypatch):
     assert (tmp_path / "output.apkg").is_file()
     assert "Staged 1 image occlusion(s)" in res.stdout
     assert (tmp_path / "occlusions").is_dir()
-    copied = list((tmp_path / "occlusions").rglob("diag.png"))
+    copied = list((tmp_path / "occlusions").glob("*.png"))
     assert len(copied) == 1
+    assert copied[0].name.endswith("_01.png")
+    assert copied[0].name in res.stdout

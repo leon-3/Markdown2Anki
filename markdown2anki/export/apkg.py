@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import secrets
 import shutil
 import warnings
 from dataclasses import dataclass, field
@@ -25,6 +26,7 @@ class ApkgExport:
     media_count: int
     flags: Flags = field(default_factory=list)  # (card, id) pairs to write back into the notes
     occlusion_dir: Path | None = None
+    staged_occlusions: dict[str, list[str]] = field(default_factory=dict)
 
 
 def stable_deck_id(name: str) -> int:
@@ -47,17 +49,40 @@ def drop_unsupported_updates(result: BuildResult, diagnostics: list[Diagnostic])
     result.notes = kept
 
 
-def export_occlusions(occlusions: list[ImageOcclusion], base_dir: Path) -> tuple[Path, Flags]:
-    """Copy image occlusion images into base_dir/occlusions/<tag>/... and return (occlusion_dir, flags)."""
+def export_occlusions(
+    occlusions: list[ImageOcclusion],
+    base_dir: Path,
+    prefix: str | None = None,
+) -> tuple[Path, Flags, dict[str, list[str]]]:
+    """Copy image occlusion images into base_dir/occlusions/ with randomized sequential names.
+
+    Returns (occlusion_dir, flags, staged_by_tag).
+    """
     occlusion_dir = base_dir / "occlusions"
+    occlusion_dir.mkdir(parents=True, exist_ok=True)
+    if prefix is None:
+        prefix = secrets.token_hex(4).upper()
+
+    by_tag: dict[str, list[ImageOcclusion]] = {}
+    for occ in occlusions:
+        by_tag.setdefault(occ.tag or "(no tag)", []).append(occ)
+
     flags: Flags = []
-    for occlusion in occlusions:
-        target_dir = occlusion_dir / occlusion.tag.replace("::", "__")
-        target_dir.mkdir(parents=True, exist_ok=True)
-        for image in occlusion.images:
-            shutil.copy2(image, target_dir / image.name)
-        flags.append((occlusion.card, occlusion.card.card_id or new_card_id()))
-    return occlusion_dir, flags
+    staged_by_tag: dict[str, list[str]] = {}
+    counter = 1
+
+    for tag, occ_list in by_tag.items():
+        staged_by_tag[tag] = []
+        for occlusion in occ_list:
+            for image in occlusion.images:
+                ext = image.suffix or ".png"
+                new_name = f"{prefix}_{counter:02d}{ext}"
+                counter += 1
+                shutil.copy2(image, occlusion_dir / new_name)
+                staged_by_tag[tag].append(new_name)
+            flags.append((occlusion.card, occlusion.card.card_id or new_card_id()))
+
+    return occlusion_dir, flags, staged_by_tag
 
 
 def export_apkg(
@@ -103,7 +128,8 @@ def export_apkg(
         package.write_to_file(str(output_path))
 
     occlusion_dir = None
+    staged_occlusions: dict[str, list[str]] = {}
     if result.occlusions:
-        occlusion_dir, occ_flags = export_occlusions(result.occlusions, output_path.parent)
+        occlusion_dir, occ_flags, staged_occlusions = export_occlusions(result.occlusions, output_path.parent)
         flags.extend(occ_flags)
-    return ApkgExport(output_path, len(result.notes), len(package.media_files), flags, occlusion_dir)
+    return ApkgExport(output_path, len(result.notes), len(package.media_files), flags, occlusion_dir, staged_occlusions)
