@@ -12,11 +12,12 @@ from markdown2anki.parser import Card
 class FakeAnki:
     """Records AnkiConnect calls; answers the few queries the exporter makes."""
 
-    def __init__(self, models, found=None, tags=None, field_names=None):
+    def __init__(self, models, found=None, tags=None, field_names=None, stored_media=None):
         self.models = models  # name -> id
         self.found = found or {}  # marker id -> note id
         self.tags = tags or {}  # note_id -> list of tags
         self.field_names = field_names or {}  # model_name -> list of field names
+        self.stored_media = stored_media or {}  # filename -> stored filename
         self.calls = []
 
     def invoke(self, action, **params):
@@ -35,6 +36,8 @@ class FakeAnki:
             return list(self.tags.get(params.get("note"), []))
         if action == "modelFieldNames":
             return list(self.field_names.get(params.get("modelName"), []))
+        if action == "storeMediaFile":
+            return self.stored_media.get(params.get("filename"), params.get("filename"))
         return None
 
     def params(self, action):
@@ -43,8 +46,8 @@ class FakeAnki:
 
 @pytest.fixture
 def anki(monkeypatch):
-    def install(models, found=None, tags=None, field_names=None):
-        fake = FakeAnki(models, found, tags, field_names)
+    def install(models, found=None, tags=None, field_names=None, stored_media=None):
+        fake = FakeAnki(models, found, tags, field_names, stored_media)
         monkeypatch.setattr(ankiconnect.AnkiConnect, "invoke", lambda self, action, **p: fake.invoke(action, **p))
         return fake
     return install
@@ -133,7 +136,7 @@ def test_template_status_and_push(anki):
     assert [s.name for s in statuses] == ["Basic"] and statuses[0].changed == ["front"]
     ankiconnect.push_template(client, statuses[0])
     update = fake.params("updateModelTemplates")[0]["model"]
-    assert update["name"] == "Basic" and "Compiler" in update["templates"]["Card 1"]["Front"]
+    assert update["name"] == "Basic" and "Compiler" in update["templates"]['Card 1']["Front"]
     assert fake.params("updateModelStyling")
 
 
@@ -209,3 +212,57 @@ def test_ankiconnect_batches_updates_via_multi(anki):
     assert action_names.count("updateNoteFields") == 2
     assert action_names.count("removeTags") == 2
     assert action_names.count("addTags") == 2
+
+
+def test_ankiconnect_rewrites_media_sources_to_stored_filenames(anki, tmp_path):
+    img = tmp_path / "Pasted image 20260905091504.png"
+    img.write_bytes(b"image_bytes")
+
+    fake = anki(
+        {"Basic": 1234},
+        stored_media={"Pasted image 20260905091504.png": "pasted image 20260905091504.png"},
+    )
+    cfg = Config(vault=Path("."), deck="D")
+
+    note = _note(
+        _card(1),
+        front="Question",
+        back='<p>Answer<br><img src="Pasted image 20260905091504.png"></p>',
+    )
+    note.media = [img]
+
+    export = ankiconnect.export_ankiconnect(BuildResult(notes=[note]), cfg, [])
+    assert export.added == 1
+    assert export.media_count == 1
+
+    added_payload = fake.params("addNotes")[0]["notes"][0]
+    assert '<img src="pasted image 20260905091504.png">' in added_payload["fields"]["Back"]
+    assert "Pasted image" not in added_payload["fields"]["Back"]
+
+
+def test_ankiconnect_rewrites_media_sources_on_update(anki, tmp_path):
+    img = tmp_path / "Diagram.PNG"
+    img.write_bytes(b"diagram_bytes")
+
+    fake = anki(
+        {"Basic": 1234},
+        found={"upd1": 700},
+        stored_media={"Diagram.PNG": "diagram.png"},
+    )
+    cfg = Config(vault=Path("."), deck="D")
+
+    note = _note(
+        _card(5, added=True, card_id="upd1"),
+        front="Diagram Q",
+        back='<p><img src="Diagram.PNG" width="300"></p>',
+    )
+    note.media = [img]
+
+    export = ankiconnect.export_ankiconnect(BuildResult(notes=[note]), cfg, [])
+    assert export.updated == 1
+
+    multi_calls = fake.params("multi")
+    update_batch = multi_calls[1]["actions"]
+    update_action = next(a for a in update_batch if a["action"] == "updateNoteFields")
+    back_field = update_action["params"]["note"]["fields"]["Back"]
+    assert '<img src="diagram.png" width="300">' in back_field

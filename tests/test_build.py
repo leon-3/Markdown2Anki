@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from markdown2anki.build import build, resolve_image_path
+import hashlib
+from markdown2anki.build import build, deterministic_image_name, resolve_image_path
 from markdown2anki.constants import CODE_TAG
 from markdown2anki.parser import parse_lines
 
@@ -132,3 +133,68 @@ def test_export_occlusions_single_folder_sequential_names(tmp_path):
     assert (out_dir / "TESTHEX8_02.jpg").is_file()
     assert (out_dir / "TESTHEX8_03.png").is_file()
     assert (out_dir / "TESTHEX8_01.png").read_bytes() == b"data1"
+
+
+def test_deterministic_image_name(tmp_path):
+    img = tmp_path / "My Diagram.PNG"
+    img.write_bytes(b"hello image data")
+    expected_hash = hashlib.sha256(b"hello image data").hexdigest()[:8].lower()
+
+    name = deterministic_image_name(img)
+    assert name == f"{expected_hash}_01.png"
+
+    # Collision test with registry
+    reg = {}
+    name1 = deterministic_image_name(img, reg)
+    assert name1 == f"{expected_hash}_01.png"
+
+    # Same file re-uses candidate
+    name1_again = deterministic_image_name(img, reg)
+    assert name1_again == f"{expected_hash}_01.png"
+
+    # Fake collision with different bytes in registry
+    reg[f"{expected_hash}_01.png"] = b"different data"
+    name2 = deterministic_image_name(img, reg)
+    assert name2 == f"{expected_hash}_02.png"
+
+
+def test_build_with_hash_media(tmp_path):
+    note_dir = tmp_path / "notes"
+    att_dir = note_dir / "attachments"
+    att_dir.mkdir(parents=True)
+    img_file = att_dir / "Pasted image 20260905091504.png"
+    img_file.write_bytes(b"sample bytes")
+    expected_hash = hashlib.sha256(b"sample bytes").hexdigest()[:8].lower()
+    expected_name = f"{expected_hash}_01.png"
+
+    cards = _cards(tmp_path, "notes", "---\nWhat is Archimedes' Principle?\n![[Pasted image 20260905091504.png|300]]\n")
+    diagnostics = []
+    result = build(cards, diagnostics, hash_media=True)
+    assert not diagnostics
+    assert len(result.notes) == 1
+    assert result.media == [img_file.resolve()]
+    assert result.media_names[img_file.resolve()] == expected_name
+    assert f'<img src="{expected_name}" width="300">' in result.notes[0].fields[1]
+
+
+def test_apkg_with_hash_media(tmp_path):
+    import json
+    import zipfile
+    from markdown2anki.export.apkg import export_apkg
+
+    note_dir = tmp_path / "notes"
+    note_dir.mkdir(parents=True)
+    img = note_dir / "Schema Diagram.PNG"
+    img.write_bytes(b"schema image content")
+    expected_hash = hashlib.sha256(b"schema image content").hexdigest()[:8].lower()
+    expected_name = f"{expected_hash}_01.png"
+
+    cards = _cards(tmp_path, "notes", "---\nQ?\n![[Schema Diagram.PNG]]\n")
+    result = build(cards, [], hash_media=True)
+    apkg_out = tmp_path / "out.apkg"
+    export = export_apkg(result, apkg_out)
+    assert export.media_count == 1
+
+    with zipfile.ZipFile(apkg_out, "r") as z:
+        media_json = json.loads(z.read("media").decode("utf-8"))
+        assert expected_name in media_json.values()

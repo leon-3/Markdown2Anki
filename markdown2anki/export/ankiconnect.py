@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -75,16 +76,21 @@ class AnkiConnect:
     def ensure_deck(self, name: str) -> None:
         self.invoke("createDeck", deck=name)
 
-    def store_media(self, notes: list[RenderedNote]) -> int:
+    def store_media(self, notes: list[RenderedNote], media_names: dict[Path, str] | None = None) -> dict[str, str]:
+        """Store media files in Anki and return a mapping of {original_name: stored_name}."""
+        stored: dict[str, str] = {}
         seen: set[Path] = set()
+        names = media_names or {}
         for note in notes:
             for path in note.media:
                 if path in seen:
                     continue
                 seen.add(path)
+                target_name = names.get(path, path.name)
                 data = base64.b64encode(path.read_bytes()).decode("ascii")
-                self.invoke("storeMediaFile", filename=path.name, data=data)
-        return len(seen)
+                res = self.invoke("storeMediaFile", filename=target_name, data=data)
+                stored[target_name] = res if isinstance(res, str) else target_name
+        return stored
 
     def find_note(self, field_name: str, card_id: str) -> int | None:
         ids = self.invoke("findNotes", query=search_query(field_name, card_id)) or []
@@ -177,6 +183,13 @@ def _fields(note: RenderedNote, card_id: str, front_name: str = "Front", back_na
     return {front_name: note.fields[0], back_name: back}
 
 
+def _rewrite_media_sources(text: str, media_map: dict[str, str]) -> str:
+    for orig, stored in media_map.items():
+        if orig != stored:
+            text = re.sub(r'src=(["\'])' + re.escape(orig) + r'\1', r'src=\1' + stored + r'\1', text)
+    return text
+
+
 def _locate_update(client: AnkiConnect, note: RenderedNote, back_field: str | None = None) -> tuple[int | None, str]:
     """(Anki note id, card id to use) for an already exported card. Cards flagged by an older version with
     Anki's note id are migrated to a short id, which is embedded now and written back afterwards."""
@@ -250,8 +263,15 @@ def export_ankiconnect(
             continue
         to_update.append((note, card_id, note_id))
 
+    media_map = client.store_media([n for n, _ in to_add] + [n for n, _, _ in to_update], result.media_names)
     export = AnkiExport()
-    export.media_count = client.store_media([n for n, _ in to_add] + [n for n, _, _ in to_update])
+    export.media_count = len(media_map)
+
+    if media_map:
+        for note, _ in to_add:
+            note.fields = [_rewrite_media_sources(f, media_map) for f in note.fields]
+        for note, _, _ in to_update:
+            note.fields = [_rewrite_media_sources(f, media_map) for f in note.fields]
 
     if to_update:
         tag_actions = [{"action": "getNoteTags", "params": {"note": note_id}} for _, _, note_id in to_update]

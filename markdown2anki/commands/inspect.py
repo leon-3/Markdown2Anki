@@ -29,7 +29,7 @@ def check(
 ) -> int:
     cfg = load(ctx)
     collected = collect(cfg, course)
-    result = build(collected.pending, collected.diagnostics, cfg.cloze_notes, vault_root=cfg.vault)
+    result = build(collected.pending, collected.diagnostics, cfg.cloze_notes, vault_root=cfg.vault, hash_media=cfg.hash_media)
 
     ui.header("m2a check", str(cfg.vault))
     console.print(INDENT + ui.kv([("notes", len(collected.sources)), ("cards", len(collected.cards)),

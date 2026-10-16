@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import filecmp
+import hashlib
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -45,6 +46,7 @@ class BuildResult:
     notes: list[RenderedNote] = field(default_factory=list)
     occlusions: list[ImageOcclusion] = field(default_factory=list)
     skipped: list[Card] = field(default_factory=list)
+    media_names: dict[Path, str] = field(default_factory=dict)
 
     @property
     def media(self) -> list[Path]:
@@ -52,6 +54,23 @@ class BuildResult:
         for note in self.notes:
             seen.extend(p for p in note.media if p not in seen)
         return seen
+
+
+def deterministic_image_name(path: Path, registry: dict[str, bytes] | None = None) -> str:
+    """Generate a deterministic 8-hex lowercase filename with counter for an image file."""
+    content = path.read_bytes()
+    prefix = hashlib.sha256(content).hexdigest()[:8].lower()
+    ext = path.suffix.lower() or ".png"
+    if registry is None:
+        return f"{prefix}_01{ext}"
+    counter = 1
+    while True:
+        candidate = f"{prefix}_{counter:02d}{ext}"
+        existing = registry.get(candidate)
+        if existing is None or existing == content:
+            registry[candidate] = content
+            return candidate
+        counter += 1
 
 
 def resolve_image_path(card: Card, filename: str, vault_root: Path | None = None) -> Path | None:
@@ -83,18 +102,21 @@ def build(
     diagnostics: list[Diagnostic] | None = None,
     cloze_notes: bool = False,
     vault_root: Path | None = None,
+    hash_media: bool = False,
 ) -> BuildResult:
-    """``cloze_notes``: export 'Cloze' cards with {{c1::}} markers as real cloze notes (default: basic note)."""
+    """``cloze_notes``: export 'Cloze' cards with {{c1::}} markers as real cloze notes (default: basic note).
+    ``hash_media``: rename embedded images to deterministic 8-hex lowercase hashes (e.g. 472d6b17_01.png)."""
     diag_list = diagnostics if diagnostics is not None else []
     result = BuildResult()
-    media_names = _MediaNames()
+    media_names_checker = _MediaNames()
+    media_registry: dict[str, bytes] = {}
     for card in cards:
         try:
             if card.kind == KIND_IMAGE_OCCLUSION:
                 result.occlusions.append(_occlusion(card, vault_root))
             else:
-                note = _note(card, cloze_notes, vault_root)
-                media_names.check(note)
+                note = _note(card, cloze_notes, vault_root, hash_media, result.media_names, media_registry)
+                media_names_checker.check(note, result.media_names)
                 _check_html(note, diag_list)
                 result.notes.append(note)
         except _Skip as skip:
@@ -124,7 +146,14 @@ def _occlusion(card: Card, vault_root: Path | None = None) -> ImageOcclusion:
     return ImageOcclusion(card, paths, card.tag)
 
 
-def _note(card: Card, cloze_notes: bool, vault_root: Path | None = None) -> RenderedNote:
+def _note(
+    card: Card,
+    cloze_notes: bool,
+    vault_root: Path | None = None,
+    hash_media: bool = False,
+    media_names: dict[Path, str] | None = None,
+    media_registry: dict[str, bytes] | None = None,
+) -> RenderedNote:
     tags = [card.tag] if card.tag else []
     question, answer = card.question, card.answer
     if card.has_code and CODE_TAG not in tags:
@@ -133,19 +162,26 @@ def _note(card: Card, cloze_notes: bool, vault_root: Path | None = None) -> Rend
         answer = strip_keyword_lines(answer, CODE_KEYWORDS)
 
     if card.kind == KIND_CLOZE:
-        text, media = _images(answer, card, vault_root)
+        text, media = _images(answer, card, vault_root, hash_media, media_names, media_registry)
         if cloze_notes and card.has_cloze_markers:
             return RenderedNote(card, MODEL_CLOZE, [render_markdown(text), ""], tags, media, deck=card.deck)
         tags.append(CLOZE_TAG)
         return RenderedNote(card, MODEL_BASIC, [render_markdown(text), ""], tags, media, deck=card.deck)
 
-    q_text, q_media = _images(question, card, vault_root)
-    a_text, a_media = _images(answer, card, vault_root)
+    q_text, q_media = _images(question, card, vault_root, hash_media, media_names, media_registry)
+    a_text, a_media = _images(answer, card, vault_root, hash_media, media_names, media_registry)
     media = q_media + [m for m in a_media if m not in q_media]
     return RenderedNote(card, MODEL_BASIC, [render_markdown(q_text), render_markdown(a_text)], tags, media, deck=card.deck)
 
 
-def _images(text: str, card: Card, vault_root: Path | None = None) -> tuple[str, list[Path]]:
+def _images(
+    text: str,
+    card: Card,
+    vault_root: Path | None = None,
+    hash_media: bool = False,
+    media_names: dict[Path, str] | None = None,
+    media_registry: dict[str, bytes] | None = None,
+) -> tuple[str, list[Path]]:
     """Replace ``![[name.png]]`` with <img> tags; images are resolved from the note directory, attachments, or vault."""
     media: list[Path] = []
     missing: list[Diagnostic] = []
@@ -155,10 +191,18 @@ def _images(text: str, card: Card, vault_root: Path | None = None) -> tuple[str,
         path = resolve_image_path(card, name, vault_root)
         if path is None:
             missing.append(Diagnostic(card.file, card.line, LEVEL_ERROR, f"image not found next to the note: {name}"))
-        elif path not in media:
-            media.append(path)
+            img_src = Path(name).name
+        else:
+            if path not in media:
+                media.append(path)
+            if hash_media:
+                img_src = deterministic_image_name(path, media_registry)
+            else:
+                img_src = path.name
+            if media_names is not None:
+                media_names[path] = img_src
 
-        attrs = f'src="{Path(name).name}"'
+        attrs = f'src="{img_src}"'
         if match.group(2):
             parts = [p.strip() for p in match.group(2).split("|") if p.strip()]
             for part in parts:
@@ -186,9 +230,11 @@ class _MediaNames:
     def __init__(self) -> None:
         self.by_name: dict[str, Path] = {}
 
-    def check(self, note: RenderedNote) -> None:
+    def check(self, note: RenderedNote, media_names: dict[Path, str] | None = None) -> None:
+        names = media_names or {}
         for path in note.media:
-            first = self.by_name.setdefault(path.name, path)
+            target_name = names.get(path, path.name)
+            first = self.by_name.setdefault(target_name, path)
             if first != path and not filecmp.cmp(first, path, shallow=False):
                 raise _Skip(Diagnostic(note.card.file, note.card.line, LEVEL_ERROR,
                                        f"media name clash: {path.name} differs from the file of the same name "

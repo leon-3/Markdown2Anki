@@ -35,7 +35,7 @@ def run(
     cfg = load(ctx)
     collected = collect(cfg, course)
     selected = [c for c in collected.cards if c.pending or (update and c.updatable)]
-    result = build(selected, collected.diagnostics, cfg.cloze_notes, vault_root=cfg.vault)
+    result = build(selected, collected.diagnostics, cfg.cloze_notes, vault_root=cfg.vault, hash_media=cfg.hash_media)
     chosen_target = target.value if target else cfg.target
     if chosen_target == Target.apkg.value:
         drop_unsupported_updates(result, collected.diagnostics)

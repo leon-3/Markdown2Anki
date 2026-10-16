@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 import shutil
+import tempfile
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -120,16 +121,32 @@ def export_apkg(
     if not decks_list:
         decks_list = [genanki.Deck(stable_deck_id(default_deck_name), default_deck_name)]
 
-    package = genanki.Package(decks_list if len(decks_list) > 1 else decks_list[0])
-    package.media_files = [str(p) for p in result.media]
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", module="genanki", message="^Field contained the following invalid HTML tags")
-        package.write_to_file(str(output_path))
+    with tempfile.TemporaryDirectory() as tmp_dir_str:
+        tmp_dir = Path(tmp_dir_str)
+        staged_media: list[str] = []
+        for p in result.media:
+            target_name = result.media_names.get(p, p.name)
+            if target_name != p.name:
+                staged = tmp_dir / target_name
+                if not staged.exists():
+                    try:
+                        staged.hardlink_to(p)
+                    except (OSError, AttributeError):
+                        shutil.copy2(p, staged)
+                staged_media.append(str(staged))
+            else:
+                staged_media.append(str(p))
+
+        package = genanki.Package(decks_list if len(decks_list) > 1 else decks_list[0])
+        package.media_files = staged_media
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", module="genanki", message="^Field contained the following invalid HTML tags")
+            package.write_to_file(str(output_path))
 
     occlusion_dir = None
     staged_occlusions: dict[str, list[str]] = {}
     if result.occlusions:
         occlusion_dir, occ_flags, staged_occlusions = export_occlusions(result.occlusions, output_path.parent)
         flags.extend(occ_flags)
-    return ApkgExport(output_path, len(result.notes), len(package.media_files), flags, occlusion_dir, staged_occlusions)
+    return ApkgExport(output_path, len(result.notes), len(result.media), flags, occlusion_dir, staged_occlusions)

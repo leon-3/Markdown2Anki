@@ -50,6 +50,7 @@ class Config:
     anki_basic_model: str = "M2A Basic"  # note type names used by the AnkiConnect target
     anki_cloze_model: str = "M2A Cloze"
     cloze_notes: bool = False  # True: 'Cloze' cards with {{c1::}} markers become real cloze notes
+    hash_media: bool = True  # True: rename embedded images to deterministic 8-hex hashes (e.g. 472d6b17_01.png)
     templates_dir: Path = field(default_factory=user_templates_dir)  # personal card templates
     ignore: list[str] = field(default_factory=lambda: list(DEFAULT_IGNORE))
     subjects: dict[str, str] = field(default_factory=dict)  # course folder -> tag; empty = every folder
@@ -193,6 +194,8 @@ def render_toml(cfg: Config) -> str:
         "# false: 'Cloze' cards are exported as basic notes tagged TODO_PROCESS_CLOZES.",
         "# true: a 'Cloze' card whose answer contains {{c1::...}} becomes a real cloze note.",
         f"cloze_notes = {'true' if cfg.cloze_notes else 'false'}",
+        "# true: rename embedded images to deterministic 8-hex lowercase hashes (e.g. 472d6b17_01.png).",
+        f"hash_media = {'true' if cfg.hash_media else 'false'}",
         "# Personal card templates: <templates_dir>/{Basic,Cloze}/{front.html,back.html,styling.css}.",
         f"templates_dir = {quote(cfg.templates_dir)}",
         "",
