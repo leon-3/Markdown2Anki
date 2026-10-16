@@ -202,12 +202,16 @@ def test_ankiconnect_batches_updates_via_multi(anki):
     export = ankiconnect.export_ankiconnect(BuildResult(notes=[note1, note2]), cfg, [])
     assert export.updated == 2
 
-    # Check multi was invoked
+    # Check multi was invoked for findNotes, getNoteTags, and updates
     multi_calls = fake.params("multi")
-    assert len(multi_calls) == 2  # 1 for getNoteTags batch, 1 for update/tags batch
+    assert len(multi_calls) == 3  # 1 for findNotes batch, 1 for getNoteTags batch, 1 for update/tags batch
 
-    # Check the update actions in the second multi call
-    update_batch = multi_calls[1]["actions"]
+    # Check findNotes batch
+    find_batch = multi_calls[0]["actions"]
+    assert [a["action"] for a in find_batch] == ["findNotes", "findNotes"]
+
+    # Check the update actions in the third multi call
+    update_batch = multi_calls[2]["actions"]
     action_names = [a["action"] for a in update_batch]
     assert action_names.count("updateNoteFields") == 2
     assert action_names.count("removeTags") == 2
@@ -262,7 +266,6 @@ def test_ankiconnect_rewrites_media_sources_on_update(anki, tmp_path):
     assert export.updated == 1
 
     multi_calls = fake.params("multi")
-    update_batch = multi_calls[1]["actions"]
-    update_action = next(a for a in update_batch if a["action"] == "updateNoteFields")
+    update_action = next(a for call in multi_calls for a in call.get("actions", []) if a["action"] == "updateNoteFields")
     back_field = update_action["params"]["note"]["fields"]["Back"]
     assert '<img src="diagram.png" width="300">' in back_field

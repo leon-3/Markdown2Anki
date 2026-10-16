@@ -98,6 +98,21 @@ class AnkiConnect:
             ids = self.invoke("findNotes", query=f'"*m2a:{card_id}-->*"') or []
         return ids[0] if ids else None
 
+    def find_notes_batch(self, queries: list[str], chunk_size: int = 100) -> list[list[int]]:
+        """Run multiple findNotes queries in chunks using AnkiConnect's multi action."""
+        if not queries:
+            return []
+        results: list[list[int]] = []
+        for i in range(0, len(queries), chunk_size):
+            chunk = queries[i : i + chunk_size]
+            actions = [{"action": "findNotes", "params": {"query": q}} for q in chunk]
+            res = self.invoke("multi", actions=actions)
+            if isinstance(res, list) and len(res) == len(chunk):
+                results.extend([r if isinstance(r, list) else [] for r in res])
+            else:
+                results.extend([(self.invoke("findNotes", query=q) or []) for q in chunk])
+        return results
+
 
 # --- note types -----------------------------------------------------------------------------------
 
@@ -248,20 +263,44 @@ def export_ankiconnect(
 
     to_add: list[tuple[RenderedNote, str]] = []
     to_update: list[tuple[RenderedNote, str, int]] = []
+    candidates: list[tuple[RenderedNote, str, str]] = []
+
     for note in result.notes:
         if not note.card.updatable:
             to_add.append((note, new_card_id()))
             continue
+        card_id = note.card.card_id
+        if is_anki_note_id(card_id):
+            to_update.append((note, new_card_id(), anki_note_id(card_id)))
+            continue
         kind = _model_kind(note.model)
         _, back_name = model_field_names.get(kind, ("Front", "Back"))
-        note_id, card_id = _locate_update(client, note, back_field=back_name)
-        if note_id is None:
-            diag_list.append(Diagnostic(note.card.file, note.card.line, LEVEL_WARNING,
-                                        "not found in Anki (deleted, other profile, or exported before ids "
-                                        "were embedded) - `m2a unflag --file ...` to add it again; skipped"))
-            result.skipped.append(note.card)
-            continue
-        to_update.append((note, card_id, note_id))
+        candidates.append((note, card_id, back_name))
+
+    if candidates:
+        queries = [search_query(back_name, card_id) for _, card_id, back_name in candidates]
+        batch_results = client.find_notes_batch(queries)
+
+        unresolved: list[tuple[RenderedNote, str, str]] = []
+        for (note, card_id, back_name), ids in zip(candidates, batch_results):
+            if ids:
+                to_update.append((note, card_id, ids[0]))
+            else:
+                unresolved.append((note, card_id, back_name))
+
+        if unresolved:
+            fb_queries = [f'"*m2a:{c[1]}-->*"' for c in unresolved]
+            fb_results = client.find_notes_batch(fb_queries)
+            for (note, card_id, _), fb_ids in zip(unresolved, fb_results):
+                if fb_ids:
+                    to_update.append((note, card_id, fb_ids[0]))
+                else:
+                    diag_list.append(Diagnostic(
+                        note.card.file, note.card.line, LEVEL_WARNING,
+                        "not found in Anki (deleted, other profile, or exported before ids "
+                        "were embedded) - `m2a unflag --file ...` to add it again; skipped",
+                    ))
+                    result.skipped.append(note.card)
 
     media_map = client.store_media([n for n, _ in to_add] + [n for n, _, _ in to_update], result.media_names)
     export = AnkiExport()
