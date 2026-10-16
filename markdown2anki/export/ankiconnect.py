@@ -5,6 +5,7 @@ import base64
 import json
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -64,6 +65,12 @@ class AnkiConnect:
             return self.invoke("modelFieldNames", modelName=model_name) or []
         except (AnkiConnectError, Exception):
             return []
+
+    def notes_info(self, notes: list[int]) -> list[dict[str, Any]]:
+        if not notes:
+            return []
+        res = self.invoke("notesInfo", notes=notes)
+        return res if isinstance(res, list) else []
 
     def create_model(self, kind: str, name: str, template: Template) -> None:
         if kind == KIND_CLOZE:
@@ -181,6 +188,7 @@ def push_template(client: AnkiConnect, status: TemplateStatus) -> None:
 class AnkiExport:
     added: int = 0
     updated: int = 0
+    unchanged: int = 0
     media_count: int = 0
     flags: Flags = field(default_factory=list)  # (card, id) pairs to write back into the notes
 
@@ -203,6 +211,24 @@ def _rewrite_media_sources(text: str, media_map: dict[str, str]) -> str:
         if orig != stored:
             text = re.sub(r'src=(["\'])' + re.escape(orig) + r'\1', r'src=\1' + stored + r'\1', text)
     return text
+
+
+def normalize_field_html(text: str) -> str:
+    """Normalize HTML for safe diff comparison between local field and Anki field."""
+    if not text:
+        return ""
+    text = text.replace("\r\n", "\n")
+    # Normalize self-closing tags: <br/> -> <br>, <img .../> -> <img ...>
+    text = re.sub(r"<(img|br|hr)\b([^>]*?)\s*/>", r"<\1\2>", text, flags=re.IGNORECASE)
+    # Normalize URL encoding in src attributes: src="a%20b.png" -> src="a b.png"
+    def _unquote_src(m: re.Match[str]) -> str:
+        return f"{m.group(1)}{urllib.parse.unquote(m.group(2))}{m.group(3)}"
+    text = re.sub(r'(src=[\"\'])(.*?)([\"\'])', _unquote_src, text, flags=re.IGNORECASE)
+    # Normalize single quotes to double quotes in src attributes
+    text = re.sub(r"src='([^']*?)'", r'src="\1"', text, flags=re.IGNORECASE)
+    # Strip whitespace per line and overall
+    lines = [line.rstrip() for line in text.strip().splitlines()]
+    return "\n".join(lines)
 
 
 def _locate_update(client: AnkiConnect, note: RenderedNote, back_field: str | None = None) -> tuple[int | None, str]:
@@ -289,7 +315,7 @@ def export_ankiconnect(
                 unresolved.append((note, card_id, back_name))
 
         if unresolved:
-            fb_queries = [f'"*m2a:{c[1]}-->*"' for c in unresolved]
+            fb_queries = [f'\"*m2a:{c[1]}-->*\"' for c in unresolved]
             fb_results = client.find_notes_batch(fb_queries)
             for (note, card_id, _), fb_ids in zip(unresolved, fb_results):
                 if fb_ids:
@@ -313,25 +339,48 @@ def export_ankiconnect(
             note.fields = [_rewrite_media_sources(f, media_map) for f in note.fields]
 
     if to_update:
-        tag_actions = [{"action": "getNoteTags", "params": {"note": note_id}} for _, _, note_id in to_update]
-        tag_results = client.invoke("multi", actions=tag_actions)
-        if not isinstance(tag_results, list) or len(tag_results) != len(to_update):
-            tag_results = [client.invoke("getNoteTags", note=note_id) for _, _, note_id in to_update]
+        update_note_ids = [nid for _, _, nid in to_update]
+        note_infos = client.notes_info(update_note_ids)
+
+        info_by_id: dict[int, dict[str, Any]] = {}
+        for info in note_infos:
+            if isinstance(info, dict) and "noteId" in info:
+                info_by_id[info["noteId"]] = info
 
         update_actions: list[dict[str, Any]] = []
-        for (note, card_id, note_id), raw_tags in zip(to_update, tag_results):
+        for note, card_id, note_id in to_update:
             kind = _model_kind(note.model)
             front_name, back_name = model_field_names.get(kind, ("Front", "Back"))
-            update_actions.append({
-                "action": "updateNoteFields",
-                "params": {"note": {"id": note_id, "fields": _fields(note, card_id, front_name, back_name)}},
-            })
+            new_fields = _fields(note, card_id, front_name, back_name)
 
-            # Synchronize tags: remove stale tags and add fresh tags
-            existing_tags = set(raw_tags or [])
+            info = info_by_id.get(note_id)
+            if info is not None and "fields" in info:
+                raw_existing_fields = info.get("fields", {})
+                existing_fields = {
+                    k: v.get("value", "") if isinstance(v, dict) else str(v)
+                    for k, v in raw_existing_fields.items()
+                }
+                existing_tags = set(info.get("tags") or [])
+                fields_changed = any(
+                    normalize_field_html(new_fields.get(fname, "")) != normalize_field_html(existing_fields.get(fname, ""))
+                    for fname in new_fields
+                )
+            else:
+                raw_tags = client.invoke("getNoteTags", note=note_id) or []
+                existing_tags = set(raw_tags)
+                fields_changed = True
+
             wanted_tags = set(note.tags)
             to_remove = existing_tags - wanted_tags
             to_add_tags = wanted_tags - existing_tags
+            tags_changed = bool(to_remove or to_add_tags)
+
+            if fields_changed:
+                update_actions.append({
+                    "action": "updateNoteFields",
+                    "params": {"note": {"id": note_id, "fields": new_fields}},
+                })
+
             if to_remove:
                 update_actions.append({
                     "action": "removeTags",
@@ -342,15 +391,14 @@ def export_ankiconnect(
                     "action": "addTags",
                     "params": {"notes": [note_id], "tags": " ".join(to_add_tags)},
                 })
-            elif not existing_tags and wanted_tags:
-                update_actions.append({
-                    "action": "addTags",
-                    "params": {"notes": [note_id], "tags": " ".join(wanted_tags)},
-                })
 
             if card_id != note.card.card_id:
                 export.flags.append((note.card, card_id))
-            export.updated += 1
+
+            if fields_changed or tags_changed or card_id != note.card.card_id:
+                export.updated += 1
+            else:
+                export.unchanged += 1
 
         if update_actions:
             res = client.invoke("multi", actions=update_actions)

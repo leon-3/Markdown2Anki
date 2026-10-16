@@ -12,10 +12,11 @@ from markdown2anki.parser import Card
 class FakeAnki:
     """Records AnkiConnect calls; answers the few queries the exporter makes."""
 
-    def __init__(self, models, found=None, tags=None, field_names=None, stored_media=None):
+    def __init__(self, models, found=None, tags=None, field_names=None, stored_media=None, fields=None):
         self.models = models  # name -> id
         self.found = found or {}  # marker id -> note id
         self.tags = tags or {}  # note_id -> list of tags
+        self.fields = fields or {}  # note_id -> dict of fields
         self.field_names = field_names or {}  # model_name -> list of field names
         self.stored_media = stored_media or {}  # filename -> stored filename
         self.calls = []
@@ -34,6 +35,15 @@ class FakeAnki:
             return [nid for cid, nid in self.found.items() if f"m2a:{cid}-->" in params["query"]]
         if action == "getNoteTags":
             return list(self.tags.get(params.get("note"), []))
+        if action == "notesInfo":
+            return [
+                {
+                    "noteId": nid,
+                    "tags": list(self.tags.get(nid, [])),
+                    "fields": {k: {"value": v} for k, v in self.fields.get(nid, {}).items()},
+                }
+                for nid in params.get("notes", [])
+            ]
         if action == "modelFieldNames":
             return list(self.field_names.get(params.get("modelName"), []))
         if action == "storeMediaFile":
@@ -46,8 +56,8 @@ class FakeAnki:
 
 @pytest.fixture
 def anki(monkeypatch):
-    def install(models, found=None, tags=None, field_names=None, stored_media=None):
-        fake = FakeAnki(models, found, tags, field_names, stored_media)
+    def install(models, found=None, tags=None, field_names=None, stored_media=None, fields=None):
+        fake = FakeAnki(models, found, tags, field_names, stored_media, fields)
         monkeypatch.setattr(ankiconnect.AnkiConnect, "invoke", lambda self, action, **p: fake.invoke(action, **p))
         return fake
     return install
@@ -202,16 +212,20 @@ def test_ankiconnect_batches_updates_via_multi(anki):
     export = ankiconnect.export_ankiconnect(BuildResult(notes=[note1, note2]), cfg, [])
     assert export.updated == 2
 
-    # Check multi was invoked for findNotes, getNoteTags, and updates
+    # Check notesInfo was invoked in batch
+    assert len(fake.params("notesInfo")) == 1
+    assert fake.params("notesInfo")[0]["notes"] == [101, 102]
+
+    # Check multi was invoked for findNotes batch and updates batch
     multi_calls = fake.params("multi")
-    assert len(multi_calls) == 3  # 1 for findNotes batch, 1 for getNoteTags batch, 1 for update/tags batch
+    assert len(multi_calls) == 2
 
     # Check findNotes batch
     find_batch = multi_calls[0]["actions"]
     assert [a["action"] for a in find_batch] == ["findNotes", "findNotes"]
 
-    # Check the update actions in the third multi call
-    update_batch = multi_calls[2]["actions"]
+    # Check the update actions in the updates batch
+    update_batch = multi_calls[1]["actions"]
     action_names = [a["action"] for a in update_batch]
     assert action_names.count("updateNoteFields") == 2
     assert action_names.count("removeTags") == 2
@@ -269,3 +283,110 @@ def test_ankiconnect_rewrites_media_sources_on_update(anki, tmp_path):
     update_action = next(a for call in multi_calls for a in call.get("actions", []) if a["action"] == "updateNoteFields")
     back_field = update_action["params"]["note"]["fields"]["Back"]
     assert '<img src="diagram.png" width="300">' in back_field
+
+
+def test_ankiconnect_skips_noop_updates(anki):
+    fake = anki(
+        {"Basic": 1234},
+        found={"noop1": 501},
+        tags={501: ["Tag1"]},
+        fields={501: {"Front": "Q1", "Back": "A1<!--m2a:noop1-->"}},
+    )
+    cfg = Config(vault=Path("."), deck="D")
+    note = _note(_card(1, added=True, card_id="noop1"), front="Q1", back="A1", tags=["Tag1"])
+
+    export = ankiconnect.export_ankiconnect(BuildResult(notes=[note]), cfg, [])
+    assert export.added == 0
+    assert export.updated == 0
+    assert export.unchanged == 1
+    assert not fake.params("updateNoteFields")
+    assert not fake.params("addTags")
+    assert not fake.params("removeTags")
+
+
+def test_ankiconnect_normalizes_html_whitespace_and_src(anki):
+    # Anki has Windows newlines, self-closing tags, and URL encoded space in src
+    fake = anki(
+        {"Basic": 1234},
+        found={"norm1": 601},
+        tags={601: ["T"]},
+        fields={601: {
+            "Front": "<p>Hello</p><br/>\r\n<img src='my%20img.png' />",
+            "Back": "<p>World</p><!--m2a:norm1-->",
+        }},
+    )
+    cfg = Config(vault=Path("."), deck="D")
+    note = _note(
+        _card(1, added=True, card_id="norm1"),
+        front='<p>Hello</p><br>\n<img src="my img.png">',
+        back="<p>World</p>",
+        tags=["T"],
+    )
+
+    export = ankiconnect.export_ankiconnect(BuildResult(notes=[note]), cfg, [])
+    assert export.updated == 0
+    assert export.unchanged == 1
+    assert not fake.params("updateNoteFields")
+
+
+def test_ankiconnect_updates_only_tags_when_fields_identical(anki):
+    fake = anki(
+        {"Basic": 1234},
+        found={"tags1": 701},
+        tags={701: ["OldTag"]},
+        fields={701: {"Front": "Q", "Back": "A<!--m2a:tags1-->"}},
+    )
+    cfg = Config(vault=Path("."), deck="D")
+    note = _note(_card(1, added=True, card_id="tags1"), front="Q", back="A", tags=["NewTag"])
+
+    export = ankiconnect.export_ankiconnect(BuildResult(notes=[note]), cfg, [])
+    assert export.updated == 1
+    assert export.unchanged == 0
+    assert not fake.params("updateNoteFields")
+    assert len(fake.params("removeTags")) == 1
+    assert len(fake.params("addTags")) == 1
+
+
+def test_ankiconnect_updates_only_fields_when_tags_identical(anki):
+    fake = anki(
+        {"Basic": 1234},
+        found={"fld1": 801},
+        tags={801: ["SameTag"]},
+        fields={801: {"Front": "Old Question", "Back": "A<!--m2a:fld1-->"}},
+    )
+    cfg = Config(vault=Path("."), deck="D")
+    note = _note(_card(1, added=True, card_id="fld1"), front="New Question", back="A", tags=["SameTag"])
+
+    export = ankiconnect.export_ankiconnect(BuildResult(notes=[note]), cfg, [])
+    assert export.updated == 1
+    assert export.unchanged == 0
+    assert len(fake.params("updateNoteFields")) == 1
+    assert not fake.params("removeTags")
+    assert not fake.params("addTags")
+
+
+def test_ankiconnect_detects_image_hash_migration_as_change(anki):
+    # Anki has unhashed filename, local build has hashed filename -> MUST update note in Anki
+    fake = anki(
+        {"Basic": 1234},
+        found={"hash1": 901},
+        tags={901: ["T"]},
+        fields={901: {
+            "Front": 'Q',
+            "Back": '<p><img src="pasted image 123.png"></p><!--m2a:hash1-->',
+        }},
+    )
+    cfg = Config(vault=Path("."), deck="D")
+    note = _note(
+        _card(1, added=True, card_id="hash1"),
+        front="Q",
+        back='<p><img src="5bcc4ef4_01.png"></p>',
+        tags=["T"],
+    )
+
+    export = ankiconnect.export_ankiconnect(BuildResult(notes=[note]), cfg, [])
+    assert export.updated == 1
+    assert export.unchanged == 0
+    assert len(fake.params("updateNoteFields")) == 1
+    update_back = fake.params("updateNoteFields")[0]["note"]["fields"]["Back"]
+    assert '<img src="5bcc4ef4_01.png">' in update_back

@@ -198,8 +198,14 @@ def save_vault_config(vault_path: Path, cfg: Config) -> None:
                 for k, v in val.items():
                     table[k] = v
                 doc[table_name] = table
-        elif table_name in doc:
-            del doc[table_name]
+        else:
+            if table_name == "subdirectories":
+                # Explicit empty table [subdirectories] is required to keep recursive Mode B active
+                # and avoid reloading DEFAULT_SUBDIRECTORIES
+                table = tomlkit.table()
+                doc[table_name] = table
+            elif table_name in doc:
+                del doc[table_name]
 
     # Atomically write back to disk
     vault_path.mkdir(parents=True, exist_ok=True)

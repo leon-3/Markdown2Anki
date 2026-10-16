@@ -96,7 +96,11 @@ def _export(target: str, result: BuildResult, cfg: Config, output: Path | None,
         except AnkiConnectError as exc:
             ui.error(str(exc), "open Anki (with the AnkiConnect add-on) and retry, or use `m2a sync --target apkg`")
             return None
-        console.print(f"  [green]✓[/] AnkiConnect: [bold]{export.added}[/] added, [bold]{export.updated}[/] updated "
+        parts = [f"[bold]{export.added}[/] added", f"[bold]{export.updated}[/] updated"]
+        if export.unchanged:
+            parts.append(f"[dim]{export.unchanged} unchanged[/]")
+        summary_str = ", ".join(parts)
+        console.print(f"  [green]✓[/] AnkiConnect: {summary_str} "
                       f"in deck [bold]{escape(cfg.deck)}[/]  [dim]{export.media_count} media files[/]")
         if result.occlusions:
             base_dir = output.parent if output else cfg.output_dir
