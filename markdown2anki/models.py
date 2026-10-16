@@ -1,4 +1,4 @@
-"""Anki note types (genanki models) and the card templates they are built from.
+"""Anki note types and the card templates they are built from.
 
 Templates are looked up per file in the personal ``templates_dir`` first and fall back to the bundled
 copies under ``markdown2anki/templates``. A template may contain ``__M2A_SUBJECT_SCRIPT__``, which is
@@ -10,12 +10,17 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-import genanki
-
 BASIC_MODEL_ID = 1633854805146
 CLOZE_MODEL_ID = 1633854805150
-BASIC_MODEL_NAME = "Basic"
-CLOZE_MODEL_NAME = "Basic (Cloze)"
+
+MODEL_NAME_BASIC: str = "M2A Basic"
+MODEL_NAME_CLOZE: str = "M2A Cloze"
+BASIC_FIELDS: tuple[str, str] = ("Front", "Back")
+CLOZE_FIELDS: tuple[str, str] = ("Text", "Back Extra")
+
+# Legacy internal aliases for backwards compatibility
+BASIC_MODEL_NAME = MODEL_NAME_BASIC
+CLOZE_MODEL_NAME = MODEL_NAME_CLOZE
 
 KIND_BASIC = "Basic"
 KIND_CLOZE = "Cloze"
@@ -30,28 +35,6 @@ class Template:
     qfmt: str
     afmt: str
     css: str
-
-
-class BasicNote(genanki.Note):
-    """Note whose GUID derives from the card id, so a re-import updates instead of duplicating."""
-
-    def __init__(self, *args, card_id: str | None = None, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.card_id = card_id
-
-    @property
-    def guid(self):
-        if self.card_id:
-            return genanki.guid_for("m2a", self.card_id)
-        return genanki.guid_for(*self.fields)
-
-
-class ClozeNote(BasicNote):
-    @property
-    def guid(self):
-        if self.card_id:
-            return genanki.guid_for("m2a", self.card_id)
-        return genanki.guid_for(self.fields[0])
 
 
 def template_path(kind: str, name: str, templates_dir: Path | None) -> Path:
@@ -79,21 +62,37 @@ def load_template(kind: str, display: dict[str, str] | None = None,
     return Template(qfmt=read("front.html"), afmt=read("back.html"), css=read("styling.css"))
 
 
-def basic_model(display: dict[str, str] | None = None, templates_dir: Path | None = None) -> genanki.Model:
-    t = load_template(KIND_BASIC, display, templates_dir)
-    return genanki.Model(
-        BASIC_MODEL_ID, BASIC_MODEL_NAME,
-        fields=[{"name": "Front", "font": "Arial"}, {"name": "Back", "font": "Arial"}],
-        templates=[{"name": "Card 1", "qfmt": t.qfmt, "afmt": t.afmt}],
-        css=t.css,
-    )
+def __getattr__(name: str):
+    if name in ("BasicNote", "ClozeNote", "basic_model", "cloze_model"):
+        from .export import apkg
+        return getattr(apkg, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def cloze_model(display: dict[str, str] | None = None, templates_dir: Path | None = None) -> genanki.Model:
-    t = load_template(KIND_CLOZE, display, templates_dir)
-    return genanki.Model(
-        CLOZE_MODEL_ID, CLOZE_MODEL_NAME,
-        fields=[{"name": "Text", "font": "Arial"}, {"name": "Back Extra", "font": "Arial"}],
-        templates=[{"name": "Cloze", "qfmt": t.qfmt, "afmt": t.afmt}],
-        css=t.css,
-    )
+def __dir__():
+    return sorted(__all__)
+
+
+__all__ = [
+    "BASIC_MODEL_ID",
+    "CLOZE_MODEL_ID",
+    "MODEL_NAME_BASIC",
+    "MODEL_NAME_CLOZE",
+    "BASIC_MODEL_NAME",
+    "CLOZE_MODEL_NAME",
+    "BASIC_FIELDS",
+    "CLOZE_FIELDS",
+    "KIND_BASIC",
+    "KIND_CLOZE",
+    "TEMPLATE_FILES",
+    "SUBJECT_SCRIPT_PLACEHOLDER",
+    "BUNDLED_DIR",
+    "Template",
+    "template_path",
+    "subject_script",
+    "load_template",
+    "BasicNote",
+    "ClozeNote",
+    "basic_model",
+    "cloze_model",
+]

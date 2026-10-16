@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import hashlib
-import secrets
 import shutil
 import tempfile
 import warnings
@@ -14,7 +13,16 @@ import genanki
 from ..build import MODEL_CLOZE, BuildResult, ImageOcclusion, RenderedNote
 from ..config import Config
 from ..ids import is_anki_note_id, new_card_id, with_marker
-from ..models import BasicNote, ClozeNote, basic_model, cloze_model
+from ..models import (
+    BASIC_MODEL_ID,
+    BASIC_MODEL_NAME,
+    CLOZE_MODEL_ID,
+    CLOZE_MODEL_NAME,
+    KIND_BASIC,
+    KIND_CLOZE,
+    load_template,
+)
+from ..occlusions import export_occlusions
 from ..parser import LEVEL_WARNING, Card, Diagnostic
 
 Flags = list[tuple[Card, str]]
@@ -28,6 +36,48 @@ class ApkgExport:
     flags: Flags = field(default_factory=list)  # (card, id) pairs to write back into the notes
     occlusion_dir: Path | None = None
     staged_occlusions: dict[str, list[str]] = field(default_factory=dict)
+
+
+class BasicNote(genanki.Note):
+    """Note whose GUID derives from the card id, so a re-import updates instead of duplicating."""
+
+    def __init__(self, *args, card_id: str | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.card_id = card_id
+
+    @property
+    def guid(self):
+        if self.card_id:
+            return genanki.guid_for("m2a", self.card_id)
+        return genanki.guid_for(*self.fields)
+
+
+class ClozeNote(BasicNote):
+    @property
+    def guid(self):
+        if self.card_id:
+            return genanki.guid_for("m2a", self.card_id)
+        return genanki.guid_for(self.fields[0])
+
+
+def basic_model(display: dict[str, str] | None = None, templates_dir: Path | None = None) -> genanki.Model:
+    t = load_template(KIND_BASIC, display, templates_dir)
+    return genanki.Model(
+        BASIC_MODEL_ID, BASIC_MODEL_NAME,
+        fields=[{"name": "Front", "font": "Arial"}, {"name": "Back", "font": "Arial"}],
+        templates=[{"name": "Card 1", "qfmt": t.qfmt, "afmt": t.afmt}],
+        css=t.css,
+    )
+
+
+def cloze_model(display: dict[str, str] | None = None, templates_dir: Path | None = None) -> genanki.Model:
+    t = load_template(KIND_CLOZE, display, templates_dir)
+    return genanki.Model(
+        CLOZE_MODEL_ID, CLOZE_MODEL_NAME,
+        fields=[{"name": "Text", "font": "Arial"}, {"name": "Back Extra", "font": "Arial"}],
+        templates=[{"name": "Cloze", "qfmt": t.qfmt, "afmt": t.afmt}],
+        css=t.css,
+    )
 
 
 def stable_deck_id(name: str) -> int:
@@ -48,42 +98,6 @@ def drop_unsupported_updates(result: BuildResult, diagnostics: list[Diagnostic])
         else:
             kept.append(note)
     result.notes = kept
-
-
-def export_occlusions(
-    occlusions: list[ImageOcclusion],
-    base_dir: Path,
-    prefix: str | None = None,
-) -> tuple[Path, Flags, dict[str, list[str]]]:
-    """Copy image occlusion images into base_dir/occlusions/ with randomized sequential names.
-
-    Returns (occlusion_dir, flags, staged_by_tag).
-    """
-    occlusion_dir = base_dir / "occlusions"
-    occlusion_dir.mkdir(parents=True, exist_ok=True)
-    if prefix is None:
-        prefix = secrets.token_hex(4).upper()
-
-    by_tag: dict[str, list[ImageOcclusion]] = {}
-    for occ in occlusions:
-        by_tag.setdefault(occ.tag or "(no tag)", []).append(occ)
-
-    flags: Flags = []
-    staged_by_tag: dict[str, list[str]] = {}
-    counter = 1
-
-    for tag, occ_list in by_tag.items():
-        staged_by_tag[tag] = []
-        for occlusion in occ_list:
-            for image in occlusion.images:
-                ext = image.suffix or ".png"
-                new_name = f"{prefix}_{counter:02d}{ext}"
-                counter += 1
-                shutil.copy2(image, occlusion_dir / new_name)
-                staged_by_tag[tag].append(new_name)
-            flags.append((occlusion.card, occlusion.card.card_id or new_card_id()))
-
-    return occlusion_dir, flags, staged_by_tag
 
 
 def export_apkg(

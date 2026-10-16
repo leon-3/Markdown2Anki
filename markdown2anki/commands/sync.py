@@ -9,8 +9,9 @@ from .. import ui
 from ..build import BuildResult, build
 from ..config import Config, Target
 from ..export.ankiconnect import AnkiConnectError, export_ankiconnect
-from ..export.apkg import drop_unsupported_updates, export_apkg, export_occlusions
+from ..export.apkg import drop_unsupported_updates, export_apkg
 from ..flags import write_flags
+from ..occlusions import export_occlusions
 from ..parser import KIND_IMAGE_OCCLUSION, Card, Diagnostic
 from ..ui import console, escape
 from ..vault import collect
@@ -34,8 +35,8 @@ def run(
     stage_occlusions: bool = typer.Option(False, "--stage-occlusions", help="Also re-stage already-flagged image occlusions during --update."),
 ) -> int:
     cfg = load(ctx)
-    collected = collect(cfg, course)
-    selected = [
+    collected = collect(cfg, course, trace_fn=ui.trace)
+    selected = [\
         c for c in collected.cards
         if c.pending or (update and c.updatable and (c.kind != KIND_IMAGE_OCCLUSION or stage_occlusions))
     ]

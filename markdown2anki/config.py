@@ -10,6 +10,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+import tomlkit
+
 CONFIG_FILE_NAME = "m2a.toml"
 
 
@@ -57,6 +59,7 @@ class Config:
     subdirectories: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_SUBDIRECTORIES))
     display: dict[str, str] = field(default_factory=dict)  # tag -> title shown on the card
     decks: dict[str, str] = field(default_factory=dict)  # folder/course -> specific deck name
+    re_stage_occlusions: bool = False
     source: Path | None = None  # where the config was loaded from
 
     def __post_init__(self) -> None:
@@ -87,6 +90,11 @@ class Config:
         if "{course}" in self.deck and course_or_folder:
             return self.deck.replace("{course}", self.subject_tag(course_or_folder) or course_or_folder)
         return self.deck
+
+    @classmethod
+    def load(cls, path: Path | None = None) -> Config:
+        """Load m2a.toml from ``path`` or from the usual lookup places."""
+        return load_config(path)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], source: Path) -> Config:
@@ -137,6 +145,67 @@ def load_config(path: Path | None = None) -> Config:
     with open(path, "rb") as f:
         data = tomllib.load(f)
     return Config.from_dict(data, path)
+
+
+def load_vault_config(vault_path: Path) -> Config:
+    """Load Config from <vault_path>/m2a.toml if it exists, otherwise return default Config."""
+    vault_path = Path(vault_path).expanduser().resolve()
+    config_file = vault_path / CONFIG_FILE_NAME
+    if not config_file.is_file():
+        return Config(vault=vault_path)
+    return load_config(config_file)
+
+
+def save_vault_config(vault_path: Path, cfg: Config) -> None:
+    """Save configuration to <vault_path>/m2a.toml using tomlkit, preserving existing comments."""
+    vault_path = Path(vault_path).expanduser().resolve()
+    config_file = vault_path / CONFIG_FILE_NAME
+    if config_file.is_file():
+        content = config_file.read_text(encoding="utf-8")
+        doc = tomlkit.parse(content)
+    else:
+        doc = tomlkit.document()
+
+    # Update top-level keys
+    doc["vault"] = str(cfg.vault)
+    doc["deck"] = cfg.deck
+    doc["package_name"] = cfg.package_name
+    doc["base_tag"] = cfg.base_tag
+    doc["output_dir"] = str(cfg.output_dir)
+    doc["target"] = cfg.target
+    doc["anki_connect_url"] = cfg.anki_connect_url
+    doc["anki_basic_model"] = cfg.anki_basic_model
+    doc["anki_cloze_model"] = cfg.anki_cloze_model
+    doc["cloze_notes"] = cfg.cloze_notes
+    doc["hash_media"] = cfg.hash_media
+    doc["templates_dir"] = str(cfg.templates_dir)
+    doc["ignore"] = list(cfg.ignore)
+    doc["re_stage_occlusions"] = cfg.re_stage_occlusions
+
+    # Update dictionary tables (subjects, subdirectories, display, decks)
+    for table_name in ("subjects", "subdirectories", "display", "decks"):
+        val: dict[str, str] = getattr(cfg, table_name, {})
+        if val:
+            if table_name in doc and isinstance(doc[table_name], dict):
+                tbl = doc[table_name]
+                for k in list(tbl.keys()):
+                    if k not in val:
+                        del tbl[k]
+                for k, v in val.items():
+                    tbl[k] = v
+            else:
+                table = tomlkit.table()
+                for k, v in val.items():
+                    table[k] = v
+                doc[table_name] = table
+        elif table_name in doc:
+            del doc[table_name]
+
+    # Atomically write back to disk
+    vault_path.mkdir(parents=True, exist_ok=True)
+    tmp_file = config_file.with_suffix(".tmp")
+    tmp_file.write_text(tomlkit.dumps(doc), encoding="utf-8")
+    tmp_file.replace(config_file)
 
 
 def config_from_env(path: Path) -> Config:

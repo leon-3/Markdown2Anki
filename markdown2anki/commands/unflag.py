@@ -20,7 +20,7 @@ def run(
     yes: bool = YES_OPTION,
 ) -> int:
     cfg = load(ctx)
-    collected = collect(cfg, course)
+    collected = collect(cfg, course, trace_fn=ui.trace)
     chosen = collected.added
     if file:
         wanted = file.expanduser().resolve()

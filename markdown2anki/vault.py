@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import fnmatch
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
-from . import ui
 from .config import Config, sanitize_tag
 from .parser import LEVEL_ERROR, LEVEL_INFO, LEVEL_WARNING, Card, Diagnostic, parse_file
+
+logger = logging.getLogger("markdown2anki.vault")
 
 
 @dataclass
@@ -47,16 +50,26 @@ class Collected:
         return any(d.level == LEVEL_ERROR for d in self.diagnostics)
 
 
-def collect(cfg: Config, course_filter: str | None = None) -> Collected:
+def collect(
+    cfg: Config,
+    course_filter: str | None = None,
+    trace_fn: Callable[[str], None] | None = None,
+) -> Collected:
     """Discover every note (optionally only one course) and parse it into cards."""
     result = Collected()
-    ui.trace("discovering notes")
+
+    def _trace(msg: str) -> None:
+        logger.debug(msg)
+        if trace_fn is not None:
+            trace_fn(msg)
+
+    _trace("discovering notes")
     result.sources = discover(cfg, course_filter, result.diagnostics)
-    ui.trace(f"parsing {len(result.sources)} note(s)")
+    _trace(f"parsing {len(result.sources)} note(s)")
     for source in result.sources:
-        ui.trace(f"  {source.path}")
+        _trace(f"  {source.path}")
         result.cards.extend(parse_file(source.path, source.base_tag, result.diagnostics, deck=source.deck))
-    ui.trace(f"{len(result.cards)} card(s)")
+    _trace(f"{len(result.cards)} card(s)")
     return result
 
 

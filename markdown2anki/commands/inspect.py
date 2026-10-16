@@ -28,7 +28,7 @@ def check(
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Also list every card."),
 ) -> int:
     cfg = load(ctx)
-    collected = collect(cfg, course)
+    collected = collect(cfg, course, trace_fn=ui.trace)
     result = build(collected.pending, collected.diagnostics, cfg.cloze_notes, vault_root=cfg.vault, hash_media=cfg.hash_media)
 
     ui.header("m2a check", str(cfg.vault))
@@ -46,7 +46,7 @@ def check(
 
 def status(ctx: typer.Context, course: str | None = COURSE_OPTION) -> int:
     cfg = load(ctx)
-    collected = collect(cfg, course)
+    collected = collect(cfg, course, trace_fn=ui.trace)
     counts: dict[str, list[int]] = {source.group: [0, 0, 0] for source in collected.sources}
     group_of = {source.path: source.group for source in collected.sources}
     for card in collected.cards:

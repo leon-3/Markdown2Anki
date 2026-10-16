@@ -4,14 +4,27 @@ from importlib.metadata import PackageNotFoundError, version
 from .parser import Card, Diagnostic, parse_file, parse_lines
 from .build import BuildResult, RenderedNote, build, resolve_image_path
 from .render import render_markdown
-from .export.apkg import ApkgExport, export_apkg, export_occlusions
+from .occlusions import export_occlusions
 from .export.ankiconnect import AnkiConnect, AnkiConnectError, AnkiExport, export_ankiconnect
 from .flags import clear_flags, write_flags
+from .config import Config, load_config, load_vault_config, save_vault_config
 
 try:
     __version__ = version("markdown2anki")
 except PackageNotFoundError:  # running from a checkout without `pip install -e .`
     __version__ = "0.0.0"
+
+
+def __getattr__(name: str):
+    if name in ("export_apkg", "ApkgExport"):
+        from .export import apkg
+        return getattr(apkg, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(__all__)
+
 
 __all__ = [
     "__version__",
@@ -33,4 +46,8 @@ __all__ = [
     "AnkiConnectError",
     "write_flags",
     "clear_flags",
+    "Config",
+    "load_config",
+    "load_vault_config",
+    "save_vault_config",
 ]
