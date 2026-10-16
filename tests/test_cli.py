@@ -296,6 +296,8 @@ def test_sync_staged_occlusions_with_ankiconnect(vault, capsys, monkeypatch, tmp
             return 6
         if action == "modelNamesAndIds":
             return {"M2A Basic": 1, "M2A Cloze": 2}
+        if action == "multi":
+            return [mock_invoke(self, a["action"], **a.get("params", {})) for a in params.get("actions", [])]
         if action == "findNotes":
             return []
         if action == "storeMediaFile":
@@ -324,6 +326,19 @@ def test_sync_staged_occlusions_with_ankiconnect(vault, capsys, monkeypatch, tmp
     assert copied[0].name in out
 
     assert "ADDED: Image Cloze" in occ_note.read_text(encoding="utf-8")
+
+    # Sync with --update skips already-flagged image occlusions by default
+    assert run("-c", cfg_path, "sync", "--update", "--yes") == 0
+    out = capsys.readouterr().out
+    assert "image occlusions 0" in out
+    assert "staged 1 image occlusion" not in out
+    assert len(list(occ_dir.glob("*.png"))) == 1
+
+    # Sync with --update and --stage-occlusions re-stages them
+    assert run("-c", cfg_path, "sync", "--update", "--stage-occlusions", "--yes") == 0
+    out = capsys.readouterr().out
+    assert "staged 1 image occlusion(s)" in out
+    assert len(list(occ_dir.glob("*.png"))) == 2
 
 
 def test_templates_diff_and_push(vault, capsys, monkeypatch):

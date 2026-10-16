@@ -11,7 +11,7 @@ from ..config import Config, Target
 from ..export.ankiconnect import AnkiConnectError, export_ankiconnect
 from ..export.apkg import drop_unsupported_updates, export_apkg, export_occlusions
 from ..flags import write_flags
-from ..parser import Card, Diagnostic
+from ..parser import KIND_IMAGE_OCCLUSION, Card, Diagnostic
 from ..ui import console, escape
 from ..vault import collect
 from ._shared import COURSE_OPTION, INDENT, load, print_card_table, print_diagnostics, print_problems
@@ -31,10 +31,14 @@ def run(
     yes: bool = typer.Option(False, "-y", "--yes", help="Do not ask before writing ADDED flags."),
     output: Path | None = typer.Option(None, "-o", "--output", help="apkg path (default: "
                                                                     "<output_dir>/<package_name>.apkg)."),
+    stage_occlusions: bool = typer.Option(False, "--stage-occlusions", help="Also re-stage already-flagged image occlusions during --update."),
 ) -> int:
     cfg = load(ctx)
     collected = collect(cfg, course)
-    selected = [c for c in collected.cards if c.pending or (update and c.updatable)]
+    selected = [
+        c for c in collected.cards
+        if c.pending or (update and c.updatable and (c.kind != KIND_IMAGE_OCCLUSION or stage_occlusions))
+    ]
     result = build(selected, collected.diagnostics, cfg.cloze_notes, vault_root=cfg.vault, hash_media=cfg.hash_media)
     chosen_target = target.value if target else cfg.target
     if chosen_target == Target.apkg.value:

@@ -2,77 +2,45 @@
 
 Turn flashcard notes written in Obsidian or standard Markdown into Anki cards.
 
-Markdown2Anki provides both a powerful CLI (`m2a`) and a clean Python library API. It exports new flashcards, tracks them with stable IDs, routes cards across multiple decks, resolves image attachments automatically, and updates cards in place when edited without resetting review histories.
+Markdown2Anki provides both a CLI (`m2a`) and a Python library API. It exports flashcards, tracks them with stable IDs, routes cards across multiple decks, resolves image attachments automatically, and updates cards in place in Anki without resetting review histories or ease factors.
 
 ---
 
-## Table of Contents
+## Features
 
-- [Key Features](#key-features)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Note Format & Syntax Guide](#note-format--syntax-guide)
-- [Vault Organization & Tagging](#vault-organization--tagging)
-- [Multi-Deck Configuration](#multi-deck-configuration)
-- [Configuration Reference (`m2a.toml`)](#configuration-reference-m2atoml)
-- [CLI Commands Reference](#cli-commands-reference)
-- [Public Python API](#public-python-api)
-- [Bundled Scripts](#bundled-scripts)
-- [Card Templates & Styling](#card-templates--styling)
-- [Development & Testing](#development--testing)
-
----
-
-## Key Features
-
-- **Two Export Targets**:
-  - **AnkiConnect** (`target = "anki"`): Pushes cards directly into a running Anki instance via HTTP. No manual `.apkg` import needed.
-  - **Anki Package** (`target = "apkg"`): Generates standalone `.apkg` files with bundled media and image occlusions.
-- **Stable In-Note Card Tracking**:
-  - Appends lightweight in-note flags: `ADDED[abc123]: Question`.
-  - Cards updated in Obsidian can be refreshed in Anki with `m2a sync --update` without losing review schedules, ease factors, or intervals.
-  - Recognizes and automatically migrates legacy flags (`ADDED: ` or `ADDED: [n12345]`).
-- **Flexible Directory Traversal**:
-  - Supports arbitrary folder depths, nested categories, and loose notes.
-  - Optional strict subfolder category filters (e.g., `Anki - Lectures`, `Anki - Exercises`).
-- **Multi-Deck Support**:
-  - Route different courses or folders to distinct Anki decks declaratively via `[decks]` in `m2a.toml` or programmatically via the library.
-  - Automatically packages multiple decks into a single `.apkg` file and ensures decks are created in Anki via AnkiConnect.
-- **Robust Image Attachment Resolution**:
-  - Discovers images referenced as `![[image.png]]` next to notes, inside local `attachments/`, `assets/`, or `media/` folders, or in a centralized vault attachment folder.
-- **Rich Card Types & Formatting**:
-  - Standard Q&A, Cloze deletions (`{{c1::...}}`), and Image Occlusion staging.
-  - Inline math (`$x^2$`) and display math (`$$\sum_{i=1}^n i$$`) protected from markdown mangling.
-  - Code syntax highlighting with `#CODE#` tag integration.
-- **Decoupled Architecture**:
-  - Use either the interactive CLI (`m2a`) or import functions directly in your own Python scripts (`from markdown2anki import parse_file, build, export_apkg`).
+- **Direct Push or Standalone Package**:
+  - **AnkiConnect** (`target = "anki"`): Pushes cards directly into a running Anki instance via HTTP.
+  - **Anki Package** (`target = "apkg"`): Generates standalone `.apkg` files with bundled media.
+- **In-Place Updates**:
+  - Tags cards with lightweight markers: `ADDED: Question <!-- m2a:id -->`.
+  - Re-sync cards with `m2a sync --update` to refresh content and tags in Anki without losing review schedules.
+- **Deterministic Media Hashing**:
+  - Embedded images are renamed to lowercase SHA-256 hashes (`<8hex>_01.ext`) with collision-safe counters, preventing media name clashes.
+- **Flexible Directory Structure**:
+  - Scans notes recursively at any folder depth, or optionally filters by specific category subdirectories.
+- **Multi-Deck Routing**:
+  - Map courses/folders to distinct decks declaratively via `[decks]` in `m2a.toml` or dynamically using `{course}` templates.
+- **Rich Card Types**:
+  - Standard Q&A, multi-line questions (`EQL:`), native Cloze deletions (`{{c1::...}}`), and Image Occlusion staging.
+  - Inline (`$x$`) and display (`$$...$$`) math with prose currency protection.
+  - Code syntax highlighting with `#CODE#` marker stripping.
 
 ---
 
 ## Installation
 
 ### Requirements
-- Python 3.9+
-- Anki (if pushing cards directly, install the [AnkiConnect](https://ankiweb.net/shared/info/2055492159) add-on, code `2055492159`).
+- **Python 3.11+**
+- Anki (if syncing directly, install the [AnkiConnect](https://ankiweb.net/shared/info/2055492159) add-on, code `2055492159`).
 
-### Local Development Install
-Clone this repository and install in editable mode:
-
+### Install
 ```bash
-git clone https://github.com/Hookyhook/Markdown2Anki.git
+git clone https://github.com/leon-3/Markdown2Anki.git
 cd Markdown2Anki
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev]'
 ```
-
-### Making `m2a` Available Globally
-To use the `m2a` command from any terminal window without activating the virtual environment:
-
-```bash
-ln -s /path/to/Markdown2Anki/.venv/bin/m2a ~/.local/bin/m2a
-```
-*(Make sure `~/.local/bin` is in your shell `$PATH`.)*
 
 ---
 
@@ -83,38 +51,43 @@ Run `m2a init` to configure your vault interactively:
 ```bash
 m2a init
 ```
-This prompts for your vault path, course folders, target deck, and export mode, saving the result to `~/.config/m2a/m2a.toml` (or use `m2a init --here` to create `./m2a.toml`).
+This prompts for your vault path, course folders, target deck, and export mode, writing to `~/.config/m2a/m2a.toml` (or use `m2a init --here` for `./m2a.toml`).
 
-### 2. Check Your Vault
-Parse all notes and verify there are no syntax errors or duplicate image names:
+### 2. Check Vault Status
+Parse all notes and verify formatting without modifying any files:
 ```bash
 m2a check
 m2a status
 ```
 
-### 3. Preview and Sync
-Preview pending notes without modifying any files:
+### 3. Sync to Anki
+Preview pending cards:
 ```bash
 m2a sync --dry-run
 ```
+
 Export pending cards into Anki:
 ```bash
 m2a sync
 ```
-`m2a sync` pushes the cards to Anki (or writes `.apkg`), then prompts to mark the exported cards with `ADDED[id]:` in your notes.
+
+To update already exported cards that you modified in your notes:
+```bash
+m2a sync --update
+```
 
 ---
 
-## Note Format & Syntax Guide
+## Note Format & Syntax
 
-Cards are defined inside Markdown files using a horizontal rule (`---`) to separate cards:
+Cards are separated inside Markdown files with a horizontal rule (`---`):
 
 ````markdown
 # Cryptography
 ## Block Ciphers
 ---
 What is the primary security goal of a block cipher?
-It provides confidentiality by transforming fixed-length blocks of plaintext into ciphertext indistinguishable from random bits under a secret key.
+It provides confidentiality by transforming fixed-length plaintext blocks into ciphertext under a secret key.
 
 ---
 What is a Key Schedule?
@@ -137,96 +110,57 @@ void quicksort(int *arr, int low, int high) { ... }
 ```
 ````
 
-### Rules & Conventions
+### Conventions
 1. **Card Separator**: A line starting with `---` starts a card.
-2. **Question**: The first non-empty line after `---` is the question.
-3. **Multi-line Questions**: Use `EQL: extra question line` immediately following the question.
-4. **Answer**: Everything between the question and the next `---` or `# Heading`.
-5. **Cloze Cards**:
-   - Start the question with `Cloze`.
-   - When `cloze_notes = true` in config, markers like `{{c1::answer}}` become native Anki Cloze notes.
-   - When `cloze_notes = false`, exported as a basic card tagged with `TODO_PROCESS_CLOZES`.
-6. **Image Occlusion**:
-   - Start the question with `Image Cloze` and place `![[diagram.png]]` in the answer.
-   - Source images are staged into `<output_dir>/occlusions/` with sequential IDs, and a summary grouped by tag is printed to the terminal.
-7. **Code**: Code blocks containing `#CODE#` are automatically tagged with `TODO_PROCESS_CODE`, and the marker is stripped.
-8. **Math**: Single dollar `$x$` produces inline KaTeX math; `$$...$$` produces display math. Literal currency amounts like `$5 and $10` are recognized as prose and untouched.
+2. **Question**: The first non-empty line after `---`.
+3. **Multi-line Questions**: Use `EQL: additional question line` immediately following the question.
+4. **Answer**: Everything between the question and the next separator or heading.
+5. **Cloze Deletions**: Question starts with `Cloze`. When `cloze_notes = true` in config, `{{c1::answer}}` generates native Anki Cloze notes.
+6. **Image Occlusion**: Question starts with `Image Cloze` and references `![[image.png]]`. Source images are staged into `<output_dir>/occlusions/` with sequential IDs and a tag summary. Once flagged, occlusions are skipped during routine `--update` syncs (use `--stage-occlusions` to force re-staging).
+7. **Code**: Code blocks containing `#CODE#` are automatically tagged with `TODO_PROCESS_CODE`.
+8. **Math**: `$x$` produces inline math; `$$...$$` produces display math. Literal currency amounts (e.g. `$5 and $10`) are preserved as text.
 
 ---
 
 ## Vault Organization & Tagging
 
-Markdown2Anki tags cards hierarchically based on your directory structure and Markdown headings:
+Markdown2Anki generates hierarchical tags from folder paths and Markdown headings:
 
 ```text
 base_tag::course_tag::folder::note_name::Heading::Subheading
 ```
 
-### Flexible Directory Structure (Recommended)
-When `[subdirectories]` is left empty in `m2a.toml`, Markdown2Anki recursively scans folders at any depth:
-
-```text
-My Vault/
-├── Computer Science/                 -> Top-level course
-│   ├── Algorithms/                   -> Subfolder
-│   │   ├── Sorting.md                -> Flashcard note
-│   │   └── attachments/              -> Local image folder
-│   │       └── tree.png
-│   └── Loose Note.md                 -> Loose file in course folder
-└── Mathematics/
-    └── Probability.md
-```
-
-### Strict Category Filtering (Fixed Categories Style)
-If you define `[subdirectories]`, only matching category folders are scanned:
-
+### Multi-Deck Routing
+Configure deck targets in `m2a.toml`:
 ```toml
-[subdirectories]
-"Anki - Lectures" = "Lectures"
-"Anki - Exercises" = "Exercises"
-```
+# Default fallback deck
+deck = "University"
 
-Notes placed outside these subfolders will be reported as skipped by `m2a check`.
-
----
-
-## Multi-Deck Configuration
-
-Markdown2Anki allows routing cards from different folders to different Anki decks.
-
-### 1. Explicit Deck Mapping (`[decks]` table)
-In `m2a.toml`:
-```toml
-deck = "University"  # Default fallback deck
-
+# Route specific courses to dedicated decks
 [decks]
 "Computer Science" = "University::CompSci"
 "Mathematics" = "University::Math"
-"Languages" = "General::Languages"
-"Personal Projects" = "General::Projects"
 ```
-
-### 2. Dynamic Deck Template (`{course}` placeholder)
+Or use dynamic deck naming:
 ```toml
 deck = "University::{course}"
 ```
-This automatically routes cards in each course folder to a subdeck named after that course.
 
 ---
 
 ## Configuration Reference (`m2a.toml`)
 
 ```toml
-# Path to your Obsidian vault (absolute or relative to this file; ~ supported)
+# Path to your Obsidian vault (~ and relative paths supported)
 vault = "~/Documents/ObsidianVault"
 
 # Default Anki deck (use :: for subdecks; supports {course} placeholder)
 deck = "University"
 
-# File name for .apkg exports (defaults to deck name)
+# File name for .apkg exports
 package_name = "University"
 
-# Root tag prepended to all cards (may be empty)
+# Root tag prepended to all cards (optional)
 base_tag = "University"
 
 # Directory where .apkg files and occlusions are written
@@ -236,12 +170,15 @@ output_dir = "."
 target = "anki"
 anki_connect_url = "http://127.0.0.1:8765"
 
-# Note type names used in Anki
+# Note type names in Anki
 anki_basic_model = "M2A Basic"
 anki_cloze_model = "M2A Cloze"
 
 # Convert Cloze cards with {{c1::}} into native Anki Cloze notes
 cloze_notes = true
+
+# Rename images to deterministic 8-hex lowercase hashes
+hash_media = true
 
 # Personal template directory (overrides bundled templates)
 templates_dir = "~/.config/m2a/templates"
@@ -254,15 +191,15 @@ ignore = [".git", ".obsidian", "Archive", "templates", "Slides"]
 "Computer Science" = "CompSci"
 "Mathematics" = "Math"
 
-# Subdirectory filter (leave empty for recursive arbitrary depth traversal)
+# Subdirectory filter (leave empty for recursive traversal at any depth)
 [subdirectories]
 
-# Folder -> specific target Anki deck
+# Course folder -> Target Anki deck mapping
 [decks]
 "Computer Science" = "University::CompSci"
 "Mathematics" = "University::Math"
 
-# Tag -> Title displayed in card corner badge
+# Tag -> Title shown in card corner badge
 [display]
 "CompSci" = "Computer Science"
 "Math" = "Mathematics"
@@ -270,29 +207,29 @@ ignore = [".git", ".obsidian", "Archive", "templates", "Slides"]
 
 ---
 
-## CLI Commands Reference
+## CLI Commands
 
 | Command | Description |
 | :--- | :--- |
 | `m2a init` | Create configuration interactively (`--here` writes `./m2a.toml`, `--yes` accepts defaults). |
-| `m2a config` | Display the active configuration file and its contents. |
-| `m2a check` | Parse all notes in the vault and report syntax errors/warnings without changing files. |
-| `m2a status` | Display a breakdown of total, added, and pending cards per folder. |
-| `m2a sync` | Export pending cards and flag them in Obsidian notes. |
-| `m2a unflag` | Remove `ADDED[id]:` flags so cards can be re-exported as new notes. |
-| `m2a templates` | Compare local templates with Anki note types and push changes via AnkiConnect. |
+| `m2a config` | Display active configuration settings. |
+| `m2a check` | Parse vault notes and report syntax errors or warnings without writing files. |
+| `m2a status` | Display card counts (pending, added, total) per course folder. |
+| `m2a sync` | Export pending cards and flag them in Markdown files (`--update` updates existing cards, `--dry-run` previews). |
+| `m2a unflag` | Remove `ADDED` flags to re-export cards as new notes. |
+| `m2a templates` | Compare local templates with Anki note types and push updates via AnkiConnect. |
 
-### Global CLI Flags
-- `-c, --config PATH`: Specify a custom config file (e.g. `m2a -c ~/other_vault.toml sync`).
-- `--vault PATH`: Override the vault path from configuration.
-- `--course PATTERN`: Restrict command execution to courses matching a substring or glob.
-- `--trace`: Enable verbose step-by-step diagnostic logging (or set `M2A_TRACE=1`).
+### Common Flags
+- `-c, --config PATH`: Use a specific configuration file.
+- `--update`: Re-sync previously exported cards to update fields/tags in Anki.
+- `--stage-occlusions`: Re-stage already-flagged image occlusions when running with `--update`.
+- `--course PATTERN`: Limit operation to courses matching a substring or glob.
+- `-n, --dry-run`: Preview actions without modifying cards or writing files.
+- `-y, --yes`: Run without confirmation prompts.
 
 ---
 
 ## Public Python API
-
-Markdown2Anki exposes a modular Python API for automation scripts and custom pipelines:
 
 ```python
 from pathlib import Path
@@ -309,44 +246,28 @@ from markdown2anki import (
 cards = parse_file(
     Path("notes/crypto.md"),
     base_tag="ComputerScience",
-    deck="CS::Crypto"
+    deck="CS::Crypto",
 )
 
-# 2. Filter pending (unflagged) cards
-pending_cards = [c for c in cards if c.pending]
+# 2. Build and render HTML / media / tags
+result = build([c for c in cards if c.pending], vault_root=Path("notes"))
 
-# 3. Build and render HTML / media / tags
-result = build(pending_cards, vault_root=Path("notes"))
-
-# 4A. Export to Anki via AnkiConnect
+# 3. Export to Anki via AnkiConnect (or fallback to .apkg)
 try:
     export = export_ankiconnect(result, deck="CS::Crypto")
-    flagged, errors = write_flags(export.flags)
-    print(f"Pushed {export.added} notes, flagged {flagged} cards.")
+    write_flags(export.flags)
 except AnkiConnectError:
-    # 4B. Fallback to .apkg export
     export = export_apkg(result, output_path=Path("output/crypto.apkg"), deck="CS::Crypto")
-    flagged, errors = write_flags(export.flags)
-    print(f"Wrote {export.note_count} notes to .apkg.")
+    write_flags(export.flags)
 ```
-
----
-
-## Bundled Scripts
-
-- **`basic_adding_from_input.py`**:
-  Simple scratchpad script. Place any markdown files in `input/` and run `python basic_adding_from_input.py` to produce `output/output.apkg`.
-- **`add_files_from_university_vault.py`**:
-  Convenience script that wraps `m2a sync` using [`m2a.toml`](file:///home/leon/Coding/Markdown2Anki/m2a.toml).
 
 ---
 
 ## Card Templates & Styling
 
-The note types (`M2A Basic` and `M2A Cloze`) are built from HTML/CSS templates in `markdown2anki/templates/`.
+Note types (`M2A Basic` and `M2A Cloze`) use HTML/CSS templates in `markdown2anki/templates/`.
 
-### Customizing Templates
-To customize your card styling, copy the template files into your personal templates directory (`~/.config/m2a/templates/`):
+To customize styling, copy templates to your personal template directory (`~/.config/m2a/templates/`):
 ```text
 ~/.config/m2a/templates/
 ├── Basic/
@@ -359,11 +280,7 @@ To customize your card styling, copy the template files into your personal templ
     └── styling.css
 ```
 
-### Corner Subject Badges (`subject_script.html`)
-Templates contain `<div class="subject" id="subject"></div>` and `__M2A_SUBJECT_SCRIPT__`.
-During build, Markdown2Anki replaces this with a script that evaluates the card's `{{Tags}}` against your `[display]` table and sets the title in the corner badge.
-
-To push template or CSS updates to existing note types in Anki:
+Push template or styling changes to Anki:
 ```bash
 m2a templates
 ```
@@ -372,10 +289,10 @@ m2a templates
 
 ## Development & Testing
 
-Run the test suite using `pytest`:
+Run the test suite with `pytest`:
 
 ```bash
 pytest
 ```
 
-All 69 unit and integration tests cover CLI commands, parsing, build rendering, image resolution, multi-deck packaging, AnkiConnect interaction, and script execution.
+Unit and integration tests cover CLI commands, parsing, HTML/markdown rendering, media handling, multi-deck packaging, and AnkiConnect interactions.
