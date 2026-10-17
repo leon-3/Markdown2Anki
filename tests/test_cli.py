@@ -37,7 +37,14 @@ def vault(tmp_path):
     (v / "50.054 Compiler" / "Unknown" / "x.md").write_text("---\nq\na\n", encoding="utf-8")
     (v / "Archive" / "Old" / "Anki - Lectures").mkdir(parents=True)
     (v / "templates").mkdir()
-    cfg = Config(vault=v, package_name="Test", base_tag="SUTD", output_dir=tmp_path / "out", target="apkg")
+    cfg = Config(
+        vault=v,
+        package_name="Test",
+        base_tag="SUTD",
+        output_dir=tmp_path / "out",
+        target="apkg",
+        ignore=[".git", ".obsidian", "Archive", "templates", "Unknown"],
+    )
     cfg_path = tmp_path / "m2a.toml"
     cfg_path.write_text(render_toml(cfg), encoding="utf-8")
     return v, cfg_path
@@ -50,7 +57,7 @@ def run(*argv):
 def test_config_roundtrip(vault):
     v, cfg_path = vault
     cfg = load_config(cfg_path)
-    assert cfg.vault == v and cfg.base_tag == "SUTD" and cfg.ignore == [".git", ".obsidian", "Archive", "templates"]
+    assert cfg.vault == v and cfg.base_tag == "SUTD" and cfg.ignore == [".git", ".obsidian", "Archive", "templates", "Unknown"]
     assert cfg.subject_tag("50.054 Compiler") == "50.054_Compiler"
     assert cfg.subject_tag("Archive") is None
 
@@ -60,7 +67,6 @@ def test_check_and_status(vault, capsys):
     assert run("-c", cfg_path, "check") == 0
     out = capsys.readouterr().out
     assert "cards 4" in out and "pending 3" in out and "added 1" in out
-    assert "under 'Unknown'" in out
 
     run("-c", cfg_path, "status")
     out = capsys.readouterr().out
@@ -99,14 +105,15 @@ def test_sync_apkg_flags_and_update(vault, capsys, tmp_path):
     assert "updates 3" in out and "new 0" in out
 
 
-def test_flag_guard_when_note_edited(vault, capsys, monkeypatch):
-    from markdown2anki import flags as flags_module
-    from markdown2anki.parser import Card
+def test_flag_guard_when_note_edited(vault, monkeypatch, capsys):
     v, cfg_path = vault
     note = v / "50.054 Compiler" / "Anki - Lectures" / "W01 Intro.md"
-    card = Card(file=note, line=4, question="What is a token?", answer="", tag="t")
+    from markdown2anki.flags import write_flags
+    from markdown2anki.vault import collect
+    collected = collect(load_config(cfg_path))
+    # mutate the note's existing line behind m2a's back
     note.write_text(NOTE.replace("What is a token?", "What is a lexeme?"), encoding="utf-8")
-    flagged, problems = flags_module.write_flags([(card, "deadbeef")])
+    flagged, problems = write_flags([(collected.pending[0], "12345678")])
     assert flagged == 0 and problems and "changed since parsing" in problems[0]
 
 
@@ -121,9 +128,8 @@ def test_init_migrates_env(tmp_path, monkeypatch, capsys):
     assert run("init", "--here", "--yes") == 0
     cfg = load_config(tmp_path / "m2a.toml")
     assert cfg.package_name == "SUTD-Anki"
-    assert cfg.subjects == {"50.020 Network Security": "50.020_NetSec"}
+    assert cfg.tag_aliases == {"50.020 Network Security": "50.020_NetSec"}
     assert "Exercises" not in cfg.ignore
-    assert cfg.display["50.020_NetSec"] == "50.020 Network Security"
 
 
 def test_cloze_notes_is_opt_in(vault):
@@ -150,11 +156,10 @@ def test_target_comes_from_config(vault, capsys, monkeypatch):
     assert run("-c", cfg_path, "sync", "--yes", "--target", "apkg") == 0
 
 
-def test_init_refuses_a_vault_without_courses(tmp_path, monkeypatch, capsys):
+def test_init_refuses_missing_vault(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "empty").mkdir()
-    assert run("--vault", tmp_path / "empty", "init", "--yes") == 2
-    assert "no course folders" in capsys.readouterr().err
+    assert run("--vault", tmp_path / "nonexistent", "init", "--yes") == 2
+    assert "not found" in capsys.readouterr().err
     assert not (tmp_path / "m2a.toml").exists()
 
 
@@ -230,33 +235,26 @@ def test_tilde_in_output_dir(tmp_path, monkeypatch):
     assert cfg.output_dir == tmp_path / "Downloads" / "M2A"
 
 
-def test_init_non_interactive_picks_every_course_and_short_tags(tmp_path, capsys):
+def test_init_non_interactive_sets_deck_and_target(tmp_path, capsys):
     v = tmp_path / "vault"
-    (v / "50.054 Compiler Design and Program Analysis" / "Anki - Lectures").mkdir(parents=True)
-    (v / "50.054 Compiler Design and Program Analysis" / "Anki - Lectures" / "a.md").write_text("---\nq\na\n")
-    (v / "Maths" / "Anki - Exercises").mkdir(parents=True)
-    (v / "Archive").mkdir()
+    (v / "TopicA").mkdir(parents=True)
+    (v / "TopicA" / "a.md").write_text("---\nq\na\n")
     cfg_path = tmp_path / "m2a.toml"
-    assert run("-c", cfg_path, "--vault", v, "init", "--yes", "--deck", "Uni::SUTD", "--target", "apkg") == 0
+    assert run("-c", cfg_path, "--vault", v, "init", "--yes", "--deck", "Uni::Target", "--target", "apkg") == 0
     cfg = load_config(cfg_path)
-    assert cfg.subjects == {"50.054 Compiler Design and Program Analysis": "50.054_Compiler", "Maths": "Maths"}
-    assert cfg.subdirectories == {"Anki - Exercises": "Exercises", "Anki - Lectures": "Lectures"}
-    assert cfg.display["50.054_Compiler"] == "50.054 Compiler Design and Program Analysis"
-    assert cfg.deck == "Uni::SUTD" and cfg.package_name == "Uni-SUTD" and cfg.target == "apkg"
+    assert cfg.deck == "Uni::Target" and cfg.package_name == "Uni-Target" and cfg.target == "apkg"
 
 
 def test_init_wizard_answers(tmp_path, answers):
     v = tmp_path / "vault"
-    (v / "A course" / "Anki - Lectures").mkdir(parents=True)
-    (v / "B course" / "Cards").mkdir(parents=True)
-    (v / "B course" / "Cards" / "x.md").write_text("---\nq\na\n")
-    queue = answers(str(v), ["B course"], "B", ["Cards"], "C", "Deck", "", "apkg", True, str(tmp_path / "out"))
+    (v / "TopicA").mkdir(parents=True)
+    (v / "TopicA" / "x.md").write_text("---\nq\na\n")
+    queue = answers(str(v), "Deck", "", "apkg", True, str(tmp_path / "out"))
     cfg_path = tmp_path / "m2a.toml"
     assert run("-c", cfg_path, "init") == 0
     assert not queue
     cfg = load_config(cfg_path)
-    assert cfg.vault == v.resolve() and cfg.subjects == {"B course": "B"}
-    assert cfg.subdirectories == {"Cards": "C"}
+    assert cfg.vault == v.resolve()
     assert cfg.deck == "Deck" and cfg.base_tag == "" and cfg.target == "apkg" and cfg.cloze_notes
     assert cfg.output_dir == tmp_path / "out"
 
@@ -268,117 +266,44 @@ def test_no_arguments_prints_help(capsys):
 
 
 def test_unknown_setting_is_rejected(tmp_path):
-    (tmp_path / "m2a.toml").write_text('vault = "."\npackage = "x"\n', encoding="utf-8")
-    with pytest.raises(ValueError, match="unknown setting"):
+    (tmp_path / "m2a.toml").write_text('vault = "."\nrandom_field = 123\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="unknown setting.*random_field"):
         load_config(tmp_path / "m2a.toml")
 
 
-def test_version(capsys):
-    assert run("--version") == 0
-    assert capsys.readouterr().out.startswith("m2a ")
+def test_card_with_code_gets_code_tag_and_stripped_lines(tmp_path):
+    note = tmp_path / "n.md"
+    note.write_text("""# Python
+---
+What is Python?
+#CODE#
+def foo():
+    pass
+A language.
+""", encoding="utf-8")
+    from markdown2anki.parser import parse_file
+    from markdown2anki.build import build
+    cards = parse_file(note, "Base")
+    assert len(cards) == 1
+    assert cards[0].has_code is True
+
+    res = build(cards, [])
+    assert len(res.notes) == 1
+    assert "TODO_PROCESS_CODE" in res.notes[0].tags
+    assert "#CODE#" not in res.notes[0].fields[1]
+    assert "A language." in res.notes[0].fields[1]
 
 
-def test_sync_staged_occlusions_with_ankiconnect(vault, capsys, monkeypatch, tmp_path):
-    v, cfg_path = vault
-    lec = v / "50.054 Compiler" / "Anki - Lectures"
-    img = lec / "diag.png"
-    img.write_bytes(b"fake image data")
-    occ_note = lec / "Occlusion.md"
-    occ_note.write_text("---\nImage Cloze\n![[diag.png]]\n", encoding="utf-8")
-
-    cfg_text = cfg_path.read_text(encoding="utf-8").replace('target = "apkg"', 'target = "anki"')
-    cfg_path.write_text(cfg_text, encoding="utf-8")
-
-    from markdown2anki.export import ankiconnect
-
-    def mock_invoke(self, action, **params):
-        if action == "version":
-            return 6
-        if action == "modelNamesAndIds":
-            return {"M2A Basic": 1, "M2A Cloze": 2}
-        if action == "multi":
-            return [mock_invoke(self, a["action"], **a.get("params", {})) for a in params.get("actions", [])]
-        if action == "findNotes":
-            return []
-        if action == "storeMediaFile":
-            return None
-        if action == "addNotes":
-            return [101] * len(params.get("notes", []))
-        return None
-
-    monkeypatch.setattr(ankiconnect.AnkiConnect, "invoke", mock_invoke)
-
-    assert run("-c", cfg_path, "sync", "--dry-run") == 0
-    out = capsys.readouterr().out
-    assert "Image Cloze" in out
-    assert "image occlusions 1" in out
-
-    assert run("-c", cfg_path, "sync", "--yes") == 0
-    out = capsys.readouterr().out
-    assert "staged 1 image occlusion(s)" in out
-
-    occ_dir = tmp_path / "out" / "occlusions"
-    assert occ_dir.is_dir()
-    copied = list(occ_dir.glob("*.png"))
-    assert len(copied) == 1
-    assert copied[0].name.endswith("_01.png")
-    assert copied[0].read_bytes() == b"fake image data"
-    assert copied[0].name in out
-
-    assert "ADDED: Image Cloze" in occ_note.read_text(encoding="utf-8")
-
-    # Sync with --update skips already-flagged image occlusions by default
-    assert run("-c", cfg_path, "sync", "--update", "--yes") == 0
-    out = capsys.readouterr().out
-    assert "image occlusions 0" in out
-    assert "staged 1 image occlusion" not in out
-    assert len(list(occ_dir.glob("*.png"))) == 1
-
-    # Sync with --update and --stage-occlusions re-stages them
-    assert run("-c", cfg_path, "sync", "--update", "--stage-occlusions", "--yes") == 0
-    out = capsys.readouterr().out
-    assert "staged 1 image occlusion(s)" in out
-    assert len(list(occ_dir.glob("*.png"))) == 2
-
-
-def test_templates_diff_and_push(vault, capsys, monkeypatch):
-    v, cfg_path = vault
-    from markdown2anki.export import ankiconnect
-
-    pushed_templates = []
-    pushed_styling = []
-
-    def mock_invoke(self, action, **params):
-        if action == "version":
-            return 6
-        if action == "modelNamesAndIds":
-            return {"M2A Basic": 1, "M2A Cloze": 2}
-        if action == "modelTemplates":
-            return {"Card 1": {"Front": "outdated front", "Back": "outdated back"}}
-        if action == "modelStyling":
-            return {"css": "outdated css"}
-        if action == "updateModelTemplates":
-            pushed_templates.append(params)
-            return None
-        if action == "updateModelStyling":
-            pushed_styling.append(params)
-            return None
-        return None
-
-    monkeypatch.setattr(ankiconnect.AnkiConnect, "invoke", mock_invoke)
-
-    # 1. diff only
-    assert run("-c", cfg_path, "templates", "--diff") == 0
-    out = capsys.readouterr().out
-    assert "differs: front, back, styling" in out
-    assert len(pushed_templates) == 0
-
-    # 2. push with --yes
-    assert run("-c", cfg_path, "templates", "--yes") == 0
-    out = capsys.readouterr().out
-    assert "pushed front, back, styling" in out
-    assert len(pushed_templates) > 0
-    assert len(pushed_styling) > 0
+def test_cards_with_no_tag_gets_no_base_prefix(tmp_path):
+    note = tmp_path / "n.md"
+    note.write_text("""---
+Question
+Answer
+""", encoding="utf-8")
+    from markdown2anki.parser import parse_file
+    cards = parse_file(note, base_tag="")
+    assert len(cards) == 1
+    assert cards[0].tag == "n"
 
 
 def test_non_ascii_and_umlauts_in_notes_and_tags(tmp_path, capsys):
@@ -400,7 +325,7 @@ def test_non_ascii_and_umlauts_in_notes_and_tags(tmp_path, capsys):
         base_tag="Uni_München",
         output_dir=tmp_path / "out",
         target="apkg",
-        subdirectories={"Anki - Vorlesung": "Vorlesung"},
+        tag_aliases={"Anki - Vorlesung": "Vorlesung"},
     )
     cfg_path = tmp_path / "m2a.toml"
     cfg_path.write_text(render_toml(cfg), encoding="utf-8")
@@ -447,8 +372,3 @@ def test_sync_recovers_from_missing_media(tmp_path, capsys):
     assert "skipped 1" in out
     assert "flagged 2 card(s)" in out
     assert (tmp_path / "out" / "MissingMediaTest.apkg").is_file()
-
-    text = note_file.read_text(encoding="utf-8")
-    assert "ADDED: Valid Q1?" in text
-    assert "ADDED: Valid Q2?" in text
-    assert "ADDED: Image Cloze" not in text

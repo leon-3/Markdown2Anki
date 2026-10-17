@@ -14,17 +14,22 @@ from markdown2anki.vault import collect
 def test_config_resolve_deck():
     cfg = Config(
         vault=Path("."),
-        deck="Uni::{course}",
-        decks={"Math": "Special::Math", "Physics": "Science::Physics"},
+        deck="DefaultDeck",
+        deck_routing={
+            "TopicA": "Special::TopicA",
+            "TopicA/SubtopicB": "Special::Nested",
+            "TopicC": "Science::TopicC",
+        },
     )
-    # Exact mapping in [decks]
-    assert cfg.resolve_deck("Math") == "Special::Math"
-    assert cfg.resolve_deck("Physics") == "Science::Physics"
-    # Fallback with {course} placeholder
-    assert cfg.resolve_deck("Computer Science") == "Uni::Computer_Science"
-    # Fallback without {course} placeholder
-    cfg_simple = Config(vault=Path("."), deck="General")
-    assert cfg_simple.resolve_deck("Math") == "General"
+    # Exact and prefix mapping in deck_routing
+    assert cfg.resolve_deck("TopicA") == "Special::TopicA"
+    assert cfg.resolve_deck("TopicA/OtherSub") == "Special::TopicA"
+    assert cfg.resolve_deck("TopicA/SubtopicB") == "Special::Nested"
+    assert cfg.resolve_deck("TopicA/SubtopicB/Deep") == "Special::Nested"
+    assert cfg.resolve_deck("TopicC") == "Science::TopicC"
+    # Fallback to default deck
+    assert cfg.resolve_deck("TopicD") == "DefaultDeck"
+    assert cfg.resolve_deck("") == "DefaultDeck"
 
 
 def test_parse_and_build_preserves_deck(tmp_path):
@@ -41,16 +46,15 @@ def test_parse_and_build_preserves_deck(tmp_path):
 
 def test_vault_collect_multi_deck(tmp_path):
     vault = tmp_path / "vault"
-    (vault / "CourseA").mkdir(parents=True)
-    (vault / "CourseB").mkdir(parents=True)
-    (vault / "CourseA" / "note1.md").write_text("# QA\n---\nQuestion A\nAnsA\n", encoding="utf-8")
-    (vault / "CourseB" / "note2.md").write_text("# QB\n---\nQuestion B\nAnsB\n", encoding="utf-8")
+    (vault / "TopicA").mkdir(parents=True)
+    (vault / "TopicB").mkdir(parents=True)
+    (vault / "TopicA" / "note1.md").write_text("# QA\n---\nQuestion A\nAnsA\n", encoding="utf-8")
+    (vault / "TopicB" / "note2.md").write_text("# QB\n---\nQuestion B\nAnsB\n", encoding="utf-8")
 
     cfg = Config(
         vault=vault,
-        subdirectories={},
         deck="DefaultDeck",
-        decks={"CourseA": "DeckA", "CourseB": "DeckB"},
+        deck_routing={"TopicA": "DeckA", "TopicB": "DeckB"},
     )
     collected = collect(cfg)
     assert len(collected.cards) == 2
@@ -61,8 +65,8 @@ def test_vault_collect_multi_deck(tmp_path):
 
 def test_export_apkg_multi_deck(tmp_path):
     out = tmp_path / "multi.apkg"
-    card1 = Card(file=tmp_path / "a.md", line=1, question="Q1", answer="A1", tag="", deck="Deck One")
-    card2 = Card(file=tmp_path / "b.md", line=1, question="Q2", answer="A2", tag="", deck="Deck Two")
+    card1 = Card(file=tmp_path / "a.md", line=1, question="Q1", answer="A1", tag="", added=False, card_id=None, deck="Deck One")
+    card2 = Card(file=tmp_path / "b.md", line=1, question="Q2", answer="A2", tag="", added=False, card_id=None, deck="Deck Two")
     res = build([card1, card2])
 
     export = apkg.export_apkg(res, out)
@@ -86,8 +90,8 @@ def test_export_apkg_multi_deck(tmp_path):
 
 def test_export_ankiconnect_multi_deck(anki):
     fake = anki({"Basic": 1234})
-    card1 = Card(file=Path("a.md"), line=1, question="Q1", answer="A1", tag="", deck="Deck One")
-    card2 = Card(file=Path("b.md"), line=1, question="Q2", answer="A2", tag="", deck="Deck Two")
+    card1 = Card(file=Path("a.md"), line=1, question="Q1", answer="A1", tag="", added=False, card_id=None, deck="Deck One")
+    card2 = Card(file=Path("b.md"), line=1, question="Q2", answer="A2", tag="", added=False, card_id=None, deck="Deck Two")
     res = build([card1, card2])
 
     cfg = Config(vault=Path("."), deck="DefaultDeck")

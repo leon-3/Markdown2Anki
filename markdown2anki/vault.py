@@ -4,12 +4,20 @@ from __future__ import annotations
 import fnmatch
 import logging
 import os
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from .config import Config, sanitize_tag
-from .parser import LEVEL_ERROR, LEVEL_INFO, LEVEL_WARNING, Card, Diagnostic, parse_file
+from .config import Config
+from .parser import (
+    LEVEL_ERROR,
+    LEVEL_INFO,
+    Card,
+    Diagnostic,
+    format_tag_segment,
+    parse_file,
+)
 
 logger = logging.getLogger("markdown2anki.vault")
 
@@ -17,8 +25,8 @@ logger = logging.getLogger("markdown2anki.vault")
 @dataclass
 class SourceFile:
     path: Path
-    course: str  # folder name
-    subdirectory: str  # folder name
+    course: str  # top folder name or (vault)
+    subdirectory: str  # immediate subfolder or (root)
     base_tag: str  # tag hierarchy above the file
     deck: str | None = None
 
@@ -50,12 +58,108 @@ class Collected:
         return any(d.level == LEVEL_ERROR for d in self.diagnostics)
 
 
+def normalize_rel_parts(path_str: str | Path | None) -> tuple[str, ...]:
+    """Canonical relative folder parts helper (NFC normalized, POSIX separators).
+
+    Returns () for vault root, empty paths, or '.' paths.
+    """
+    if not path_str:
+        return ()
+    norm = unicodedata.normalize("NFC", str(path_str)).replace("\\", "/")
+    segments = [s.strip() for s in norm.split("/") if s.strip() and s.strip() != "."]
+    return tuple(segments)
+
+
+def resolve_deck_for_parts(parts: tuple[str, ...], rules: dict[str, str], default_deck: str) -> str:
+    """Longest Prefix Match (LPM) on folder parts against deck_routing rules."""
+    if not rules:
+        return default_deck
+
+    best_match_deck: str | None = None
+    best_match_len: int = -1
+
+    for rule_key, deck_name in rules.items():
+        rule_parts = normalize_rel_parts(rule_key)
+        # Match only on folder segment boundaries
+        if len(rule_parts) <= len(parts) and parts[:len(rule_parts)] == rule_parts:
+            if len(rule_parts) > best_match_len:
+                best_match_len = len(rule_parts)
+                best_match_deck = deck_name
+
+    return best_match_deck if best_match_deck is not None else default_deck
+
+
+def resolve_tags_for_parts(
+    parts: tuple[str, ...],
+    base_tag: str,
+    tag_aliases: dict[str, str],
+    pad_single_digits: bool = True,
+) -> str:
+    """Single-pass greedy token resolution for hierarchical Anki tags."""
+    alias_map: dict[tuple[str, ...], str] = {
+        normalize_rel_parts(k): v for k, v in tag_aliases.items()
+    }
+
+    out_segments: list[str] = []
+    i = 0
+    n = len(parts)
+
+    while i < n:
+        matched = False
+        for k in range(n - i, 0, -1):
+            sub_tuple = parts[i : i + k]
+            if sub_tuple in alias_map:
+                replacement = alias_map[sub_tuple]
+                matched = True
+                i += k
+                if replacement == "":
+                    # Suppressed segment
+                    break
+                # An explicit alias can be hierarchical (using :: or /)
+                # Explicit alias tokens are authoritative and exempt from automatic digit padding
+                norm_repl = replacement.replace("/", "::")
+                for token in norm_repl.split("::"):
+                    token = token.strip()
+                    if token:
+                        out_segments.append(token)
+                break
+
+        if not matched:
+            seg = format_tag_segment(parts[i], pad_single_digits=pad_single_digits)
+            if seg:
+                out_segments.append(seg)
+            i += 1
+
+    all_segments: list[str] = []
+    if base_tag:
+        for b in base_tag.split("::"):
+            b = b.strip()
+            if b:
+                all_segments.append(b)
+    all_segments.extend(out_segments)
+
+    return "::".join(all_segments)
+
+
+def _is_ignored(rel_parts: tuple[str, ...], name: str, ignore_patterns: list[str]) -> bool:
+    if name.startswith("."):
+        return True
+    rel_str = "/".join(rel_parts)
+    for pat in ignore_patterns:
+        pat_norm = pat.strip().replace("\\", "/").rstrip("/")
+        if fnmatch.fnmatch(name, pat_norm) or fnmatch.fnmatch(rel_str, pat_norm):
+            return True
+        if pat_norm in (name, rel_str):
+            return True
+    return False
+
+
 def collect(
     cfg: Config,
     course_filter: str | None = None,
     trace_fn: Callable[[str], None] | None = None,
 ) -> Collected:
-    """Discover every note (optionally only one course) and parse it into cards."""
+    """Discover every note (optionally filtered by path/course) and parse it into cards."""
     result = Collected()
 
     def _trace(msg: str) -> None:
@@ -68,107 +172,76 @@ def collect(
     _trace(f"parsing {len(result.sources)} note(s)")
     for source in result.sources:
         _trace(f"  {source.path}")
-        result.cards.extend(parse_file(source.path, source.base_tag, result.diagnostics, deck=source.deck))
+        result.cards.extend(
+            parse_file(
+                source.path,
+                source.base_tag,
+                result.diagnostics,
+                deck=source.deck,
+                pad_single_digits=cfg.pad_single_digit_tags,
+            )
+        )
     _trace(f"{len(result.cards)} card(s)")
     return result
 
 
-def discover(cfg: Config, course_filter: str | None, diagnostics: list[Diagnostic]) -> list[SourceFile]:
-    """Find note files to parse based on vault configuration.
-
-    Supports two distinct vault organization modes:
-
-    1. Mode A: Strict Two-Step Academic Hierarchy (when `cfg.subdirectories` is non-empty)
-       - Vault layout: `<vault>/<course>/<subdirectory>/*.md`
-       - Origin: Designed for structured university vaults where each module contains specific
-         learning activity folders (e.g. `Anki - Lectures`, `Anki - Exercises`).
-       - Behavior: Only subfolders explicitly listed in `[subdirectories]` are parsed, mapping
-         each subdirectory to a fixed sub-tag (e.g. `Lectures`). Non-matching subfolders (e.g.
-         `Summaries`, `Cheat Sheets`) and loose `.md` files directly in `<course>/` are intentionally
-         quarantined and skipped with diagnostic warnings to prevent accidental note ingestion.
-
-    2. Mode B: Full Recursive Traversal (when `cfg.subdirectories` is empty)
-       - Vault layout: `<vault>/<topic>/.../arbitrary/nested/folders/*.md`
-       - Origin: Designed for personal knowledge bases and Long Term Knowledge (LTK) vaults where
-         notes are organized by topic trees rather than fixed academic course categories.
-       - Behavior: Recursively walks all folders down to arbitrary depth. Every intermediate folder
-         becomes a segment in the hierarchical Anki tag (e.g. `01_General::Math::Probability_Theory`),
-         and notes can reside at any depth (including directly in top-level subject folders).
-    """
+def discover(
+    cfg: Config,
+    course_filter: str | None = None,
+    diagnostics: list[Diagnostic] | None = None,
+) -> list[SourceFile]:
+    """Find note files to parse based on vault configuration using unified recursive traversal."""
     if not cfg.vault.is_dir():
         raise FileNotFoundError(f"vault directory not found: {cfg.vault}")
 
+    diagnostics = diagnostics if diagnostics is not None else []
     sources: list[SourceFile] = []
-    top_dirs = _subdirs(cfg.vault)
-    if not top_dirs:
-        top_dirs = [cfg.vault]
 
-    for course_dir in top_dirs:
-        name = course_dir.name if course_dir != cfg.vault else ""
-        subject_tag = cfg.subject_tag(name) if name else None
-        if name and subject_tag is None:
-            if name not in cfg.ignore:
-                diagnostics.append(Diagnostic(course_dir, 0, LEVEL_INFO, "skipped folder (not in [subjects])"))
-            continue
-        if course_filter and name and not _matches(course_filter, name, subject_tag or ""):
-            continue
+    for root, dirs, files in os.walk(cfg.vault, topdown=True):
+        rel_root = os.path.relpath(root, cfg.vault)
+        root_parts = normalize_rel_parts(rel_root)
 
-        deck = cfg.resolve_deck(name)
+        # In-place directory pruning
+        dirs[:] = [
+            d for d in sorted(dirs)
+            if not _is_ignored(root_parts + (d,), d, cfg.ignore)
+        ]
 
-        # Traversal Mode Switch:
-        # If [subdirectories] is configured, enforce strict two-step academic hierarchy
-        # (<course>/<subdirectory>/*.md) and warn about loose files or unlisted subfolders.
-        # If [subdirectories] is empty, allow free-form arbitrary-depth recursive walking
-        # for personal knowledge bases / LTK vaults.
-        if cfg.subdirectories:
-            # Mode A: Enforce two-step hierarchy (<course>/<subdirectory>/*.md)
-            for sub_dir in _subdirs(course_dir):
-                if sub_dir.name in cfg.ignore:
-                    continue
-                sub_tag = cfg.subdirectories.get(sub_dir.name)
-                if sub_tag is None:
-                    count = len(list(sub_dir.rglob("*.md")))
-                    if count:
-                        diagnostics.append(Diagnostic(sub_dir, 0, LEVEL_WARNING,
-                                                      f"skipped {count} note(s) under '{sub_dir.name}': not in "
-                                                      f"[subdirectories] (notes must be <course>/<subdirectory>/*.md)"))
-                    continue
+        # Process markdown files deterministically
+        for file in sorted(files):
+            if not file.endswith(".md") or file.startswith("."):
+                continue
 
-                for root, dirs, files in os.walk(sub_dir):
-                    dirs[:] = [d for d in dirs if not d.startswith(".") and d not in cfg.ignore]
-                    dirs.sort()
-                    rel = os.path.relpath(root, sub_dir)
-                    parts = [] if rel == "." else rel.split(os.sep)
-                    tag_parts = [cfg.base_tag, subject_tag, sub_tag] + [sanitize_tag(p) for p in parts]
-                    base_tag = "::".join(t for t in tag_parts if t)
-                    for file in sorted(files):
-                        if file.endswith(".md"):
-                            sources.append(SourceFile(Path(root) / file, name, sub_dir.name, base_tag, deck=deck))
+            file_rel_parts = root_parts + (file,)
+            if _is_ignored(file_rel_parts, file, cfg.ignore):
+                continue
 
-            loose = list(course_dir.glob("*.md"))
-            if loose:
-                diagnostics.append(Diagnostic(course_dir, 0, LEVEL_WARNING,
-                                              f"skipped {len(loose)} note(s) directly in the course folder; notes must "
-                                              f"be inside a subdirectory such as 'Anki - Lectures'"))
-        else:
-            # Mode B: Recursive walking for arbitrary depth
-            for root, dirs, files in os.walk(course_dir):
-                dirs[:] = [d for d in dirs if not d.startswith(".") and d not in cfg.ignore]
-                dirs.sort()
-                rel = os.path.relpath(root, course_dir)
-                parts = [] if rel == "." else rel.split(os.sep)
-                tag_parts = [cfg.base_tag, subject_tag] + [sanitize_tag(p) for p in parts]
-                base_tag = "::".join(t for t in tag_parts if t)
-                sub_name = parts[0] if parts else "(root)"
-                for file in sorted(files):
-                    if file.endswith(".md"):
-                        sources.append(SourceFile(Path(root) / file, name or "(vault)", sub_name, base_tag, deck=deck))
+            note_path = Path(root) / file
+            deck = resolve_deck_for_parts(root_parts, cfg.deck_routing, cfg.deck)
+            base_tag = resolve_tags_for_parts(
+                root_parts,
+                cfg.base_tag,
+                cfg.tag_aliases,
+                pad_single_digits=cfg.pad_single_digit_tags,
+            )
+
+            course_name = root_parts[0] if root_parts else "(vault)"
+            sub_name = root_parts[1] if len(root_parts) > 1 else "(root)"
+
+            if course_filter and not _matches(course_filter, course_name, *root_parts):
+                continue
+
+            sources.append(
+                SourceFile(
+                    path=note_path,
+                    course=course_name,
+                    subdirectory=sub_name,
+                    base_tag=base_tag,
+                    deck=deck,
+                )
+            )
 
     return sources
-
-
-def _subdirs(path: Path) -> list[Path]:
-    return sorted(p for p in path.iterdir() if p.is_dir() and not p.name.startswith("."))
 
 
 def _matches(pattern: str, *candidates: str) -> bool:

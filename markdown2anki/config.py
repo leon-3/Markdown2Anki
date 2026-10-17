@@ -22,7 +22,6 @@ class Target(str, Enum):
 
 TARGETS = tuple(t.value for t in Target)
 
-DEFAULT_SUBDIRECTORIES = {"Anki - Lectures": "Lectures", "Anki - Exercises": "Exercises"}
 DEFAULT_IGNORE = [".git", ".obsidian", "Archive", "templates"]
 
 
@@ -43,9 +42,10 @@ def user_templates_dir() -> Path:
 @dataclass
 class Config:
     vault: Path
-    deck: str = "Anki"  # Anki deck; "::" separates subdecks
+    deck: str = "Anki"  # default target Anki deck; "::" separates subdecks
     package_name: str = ""  # file name of the .apkg export; defaults to the deck name
     base_tag: str = ""  # tag hierarchy root prepended to every card; may be empty
+    pad_single_digit_tags: bool = True  # True: zero-pad single-digit numbers in tags (1 -> 01)
     output_dir: Path = Path(".")
     target: str = "anki"  # default for `m2a sync`
     anki_connect_url: str = "http://127.0.0.1:8765"
@@ -55,10 +55,9 @@ class Config:
     hash_media: bool = True  # True: rename embedded images to deterministic 8-hex hashes (e.g. 472d6b17_01.png)
     templates_dir: Path = field(default_factory=user_templates_dir)  # personal card templates
     ignore: list[str] = field(default_factory=lambda: list(DEFAULT_IGNORE))
-    subjects: dict[str, str] = field(default_factory=dict)  # course folder -> tag; empty = every folder
-    subdirectories: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_SUBDIRECTORIES))
-    display: dict[str, str] = field(default_factory=dict)  # tag -> title shown on the card
-    decks: dict[str, str] = field(default_factory=dict)  # folder/course -> specific deck name
+    deck_routing: dict[str, str] = field(default_factory=dict)  # relative folder path prefix -> target deck
+    tag_aliases: dict[str, str] = field(default_factory=dict)  # relative folder path prefix / segment -> tag replacement
+    display: dict[str, str] = field(default_factory=dict)  # tag -> title shown on the card (deprecated)
     re_stage_occlusions: bool = False
     source: Path | None = None  # where the config was loaded from
 
@@ -72,24 +71,31 @@ class Config:
             raise ValueError(f"target must be one of {', '.join(TARGETS)}, not {self.target!r}")
 
     @property
+    def decks(self) -> dict[str, str]:
+        """Compatibility property mapping to deck_routing."""
+        return self.deck_routing
+
+    @decks.setter
+    def decks(self, value: dict[str, str]) -> None:
+        self.deck_routing = value
+
+    @property
     def apkg_path(self) -> Path:
         return self.output_dir / f"{self.package_name}.apkg"
 
     def subject_tag(self, folder_name: str) -> str | None:
-        """Tag for a top-level vault folder, or None if the folder is not a course."""
+        """Tag for a folder, or None if the folder is ignored."""
         if folder_name in self.ignore:
             return None
-        if self.subjects:
-            return self.subjects.get(folder_name)
+        if folder_name in self.tag_aliases:
+            return self.tag_aliases[folder_name] or None
         return sanitize_tag(folder_name)
 
-    def resolve_deck(self, course_or_folder: str = "") -> str:
-        """Resolve deck name from [decks] mapping, template, or default deck."""
-        if course_or_folder and course_or_folder in self.decks:
-            return self.decks[course_or_folder]
-        if "{course}" in self.deck and course_or_folder:
-            return self.deck.replace("{course}", self.subject_tag(course_or_folder) or course_or_folder)
-        return self.deck
+    def resolve_deck(self, folder_path: str = "") -> str:
+        """Resolve deck name from deck_routing rules (or fallback to default deck)."""
+        from .vault import normalize_rel_parts, resolve_deck_for_parts
+        parts = normalize_rel_parts(folder_path)
+        return resolve_deck_for_parts(parts, self.deck_routing, self.deck)
 
     @classmethod
     def load(cls, path: Path | None = None) -> Config:
@@ -101,11 +107,21 @@ class Config:
         """Build a Config from parsed TOML. Relative paths are taken relative to the config file."""
         if not data.get("vault"):
             raise ValueError(f"{source}: 'vault' is required")
+
+        values = dict(data)
+        # Migrate or support legacy 'decks' key
+        if "decks" in values and "deck_routing" not in values:
+            values["deck_routing"] = values.pop("decks")
+
+        # Clean legacy keys
+        values.pop("subjects", None)
+        values.pop("subdirectories", None)
+
         known = {f.name for f in fields(cls)} - {"source"}
-        unknown = sorted(set(data) - known)
+        unknown = sorted(set(values) - known)
         if unknown:
             raise ValueError(f"{source}: unknown setting(s): {', '.join(unknown)}")
-        values = dict(data)
+
         for key in ("vault", "output_dir", "templates_dir"):
             if key in values:
                 values[key] = _resolve_relative(Path(values[key]).expanduser(), source.parent)
@@ -148,11 +164,11 @@ def load_config(path: Path | None = None) -> Config:
 
 
 def load_vault_config(vault_path: Path) -> Config:
-    """Load Config from <vault_path>/m2a.toml if it exists, otherwise return default Config with recursive walking."""
+    """Load Config from <vault_path>/m2a.toml if it exists, otherwise return default Config."""
     vault_path = Path(vault_path).expanduser().resolve()
     config_file = vault_path / CONFIG_FILE_NAME
     if not config_file.is_file():
-        return Config(vault=vault_path, subdirectories={})
+        return Config(vault=vault_path)
     return load_config(config_file)
 
 
@@ -171,6 +187,7 @@ def save_vault_config(vault_path: Path, cfg: Config) -> None:
     doc["deck"] = cfg.deck
     doc["package_name"] = cfg.package_name
     doc["base_tag"] = cfg.base_tag
+    doc["pad_single_digit_tags"] = cfg.pad_single_digit_tags
     doc["output_dir"] = str(cfg.output_dir)
     doc["target"] = cfg.target
     doc["anki_connect_url"] = cfg.anki_connect_url
@@ -182,8 +199,8 @@ def save_vault_config(vault_path: Path, cfg: Config) -> None:
     doc["ignore"] = list(cfg.ignore)
     doc["re_stage_occlusions"] = cfg.re_stage_occlusions
 
-    # Update dictionary tables (subjects, subdirectories, display, decks)
-    for table_name in ("subjects", "subdirectories", "display", "decks"):
+    # Update dictionary tables (deck_routing, tag_aliases)
+    for table_name in ("deck_routing", "tag_aliases"):
         val: dict[str, str] = getattr(cfg, table_name, {})
         if val:
             if table_name in doc and isinstance(doc[table_name], dict):
@@ -199,13 +216,13 @@ def save_vault_config(vault_path: Path, cfg: Config) -> None:
                     table[k] = v
                 doc[table_name] = table
         else:
-            if table_name == "subdirectories":
-                # Explicit empty table [subdirectories] is required to keep recursive Mode B active
-                # and avoid reloading DEFAULT_SUBDIRECTORIES
-                table = tomlkit.table()
-                doc[table_name] = table
-            elif table_name in doc:
+            if table_name in doc:
                 del doc[table_name]
+
+    # Explicitly pop legacy tables if present in existing document
+    for legacy_key in ("decks", "subjects", "subdirectories", "display"):
+        if legacy_key in doc:
+            del doc[legacy_key]
 
     # Atomically write back to disk
     vault_path.mkdir(parents=True, exist_ok=True)
@@ -225,14 +242,20 @@ def config_from_env(path: Path) -> Config:
     def as_json(key: str, default: Any) -> Any:
         return json.loads(values[key]) if values.get(key) else default
 
-    subdirectories = as_json("SUB_DIRECTORY_TAG_DICTIONARY", DEFAULT_SUBDIRECTORIES)
-    # The old script consulted IGNORE before the subdirectory map and silently dropped those cards.
+    subdirectories = as_json("SUB_DIRECTORY_TAG_DICTIONARY", {})
     ignore = [d for d in as_json("IGNORE_DIRECTORIES", DEFAULT_IGNORE)
               if d not in subdirectories and d not in subdirectories.values()]
     deck = values.get("PACKAGE_NAME", "Anki")
-    return Config(vault=Path(values.get("OBSIDIAN_VAULT_DIRECTORY", ".")), deck=deck, package_name=deck,
-                  base_tag=values.get("BASE_TAG", ""), subjects=as_json("SUBJECT_TAG_DICTIONARY", {}),
-                  subdirectories=subdirectories, ignore=ignore, source=path)
+    tag_aliases = dict(as_json("SUBJECT_TAG_DICTIONARY", {}))
+    return Config(
+        vault=Path(values.get("OBSIDIAN_VAULT_DIRECTORY", ".")),
+        deck=deck,
+        package_name=deck,
+        base_tag=values.get("BASE_TAG", ""),
+        tag_aliases=tag_aliases,
+        ignore=ignore,
+        source=path,
+    )
 
 
 def render_toml(cfg: Config) -> str:
@@ -250,12 +273,14 @@ def render_toml(cfg: Config) -> str:
         "# Markdown2Anki configuration. Paths may use ~; relative paths are relative to this file.",
         f"vault = {quote(cfg.vault)}",
         "",
-        "# Anki deck the cards go into; use :: for subdecks.",
+        "# Default Anki deck the cards go into; use :: for subdecks.",
         f"deck = {quote(cfg.deck)}",
         "# File name of the .apkg export.",
         f"package_name = {quote(cfg.package_name)}",
         "# Tag prepended to every card (may be empty).",
         f"base_tag = {quote(cfg.base_tag)}",
+        "# Automatically pad single-digit numbers with leading zero in tags (e.g. 1 -> 01).",
+        f"pad_single_digit_tags = {'true' if cfg.pad_single_digit_tags else 'false'}",
         "# Where .apkg files and image-occlusion sources are written.",
         f"output_dir = {quote(cfg.output_dir)}",
         "",
@@ -274,16 +299,12 @@ def render_toml(cfg: Config) -> str:
         "# Personal card templates: <templates_dir>/{Basic,Cloze}/{front.html,back.html,styling.css}.",
         f"templates_dir = {quote(cfg.templates_dir)}",
         "",
-        "# Top-level vault folders that are not courses.",
+        "# Folders or glob patterns to ignore during vault traversal.",
         "ignore = " + json.dumps(cfg.ignore, ensure_ascii=False),
         "",
-        *table("subjects", cfg.subjects,
-               "Course folder -> tag. An empty table exports every non-ignored folder with the folder name as tag."),
-        *table("subdirectories", cfg.subdirectories,
-               "Folder inside a course -> tag. Notes in any other subfolder are reported and skipped."),
-        *table("display", cfg.display,
-               "Tag -> title shown in the corner of the card. First match wins; list specific tags first."),
-        *table("decks", cfg.decks,
-               "Course or folder -> specific deck name override."),
+        *table("deck_routing", cfg.deck_routing,
+               "Vault folder/path prefix -> target Anki deck name override (longest prefix match)."),
+        *table("tag_aliases", cfg.tag_aliases,
+               "Vault folder/path prefix -> tag replacement, alias, or '' to omit."),
     ]
     return "\n".join(lines)

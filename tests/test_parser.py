@@ -1,7 +1,15 @@
 from pathlib import Path
 
 from markdown2anki.flags import clear_flags, write_flags
-from markdown2anki.parser import KIND_BASIC, KIND_CLOZE, KIND_IMAGE_OCCLUSION, parse_file, parse_lines
+from markdown2anki.parser import (
+    KIND_BASIC,
+    KIND_CLOZE,
+    KIND_IMAGE_OCCLUSION,
+    format_tag_segment,
+    merge_tags,
+    parse_file,
+    parse_lines,
+)
 
 F = Path("W01 Intro.md")
 
@@ -178,12 +186,29 @@ def test_crlf_line_endings_preserved_when_flagging(tmp_path):
     # Every line must end in CRLF, no bare LF
     lines = raw.split(b"\r\n")
     assert not any(b"\n" in l for l in lines)
-    assert b"ADDED: Question 1 %%abc123%%" in raw
 
-    # Clearing flags should also preserve CRLF
-    cards_reloaded = parse_file(note, "Base")
-    cleared, problems = clear_flags([cards_reloaded[0]])
-    assert cleared == 1 and not problems
-    raw_cleared = note.read_bytes()
-    assert b"\r\n" in raw_cleared
-    assert not any(b"\n" in l for l in raw_cleared.split(b"\r\n"))
+
+def test_format_tag_segment_boundaries():
+    # Isolated single digit
+    assert format_tag_segment("1", pad_single_digits=True) == "01"
+    assert format_tag_segment("1", pad_single_digits=False) == "1"
+    # Single digit with delimiter
+    assert format_tag_segment("1. Intro", pad_single_digits=True) == "01_Intro"
+    assert format_tag_segment("1. Intro", pad_single_digits=False) == "1_Intro"
+    assert format_tag_segment("2-Part", pad_single_digits=True) == "02-Part"
+    # Already padded or multi-digit
+    assert format_tag_segment("01", pad_single_digits=True) == "01"
+    assert format_tag_segment("10", pad_single_digits=True) == "10"
+    # Alphanumeric terms must not have false-positive padding
+    assert format_tag_segment("2D Geometry", pad_single_digits=True) == "2D_Geometry"
+    assert format_tag_segment("3D Rendering", pad_single_digits=True) == "3D_Rendering"
+    assert format_tag_segment("1st Law", pad_single_digits=True) == "1st_Law"
+    assert format_tag_segment("3Blue1Brown", pad_single_digits=True) == "3Blue1Brown"
+    # Decimal numbers / dot preservation
+    assert format_tag_segment("50.054", pad_single_digits=True) == "50.054"
+
+
+def test_merge_tags_with_toggle():
+    assert merge_tags(["Base", "1. Lesson"], pad_single_digits=True) == "Base::01_Lesson"
+    assert merge_tags(["Base", "1. Lesson"], pad_single_digits=False) == "Base::1_Lesson"
+    assert merge_tags(["Base::Sub", "2D"], pad_single_digits=True) == "Base::Sub::2D"

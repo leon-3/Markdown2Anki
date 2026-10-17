@@ -1,8 +1,6 @@
-"""Markdown note parser.
+"""Fast line-based parser that extracts cards from Markdown files.
 
-Format (see README): cards are separated by a line of ``---``; the first line after it is the question
-(``EQL: `` lines continue it), everything else is the answer. Headings become tags. A question that is
-exactly ``Cloze`` makes a cloze card, ``Image Cloze`` an image-occlusion export.
+No Markdown AST is built here; that happens in render.py on the extracted cards.
 """
 from __future__ import annotations
 
@@ -10,30 +8,30 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from .constants import CODE_KEYWORDS
-from .ids import parse_added
-
-KIND_BASIC = "basic"
-KIND_CLOZE = "cloze"
-KIND_IMAGE_OCCLUSION = "image_occlusion"
+from .ids import MARKER_RE, parse_added
 
 LEVEL_INFO = "info"
 LEVEL_WARNING = "warning"
 LEVEL_ERROR = "error"
 
-EQL_PREFIX = "EQL: "
-HEADING_RE = re.compile(r"^(#+)\s*(.*?)\s*$")
-FENCE_RE = re.compile(r"^\s*```")
-FENCED_CODE_BLOCK_RE = re.compile(r"^[ \t]*```[^\n]*\n.*?^[ \t]*```[ \t]*$", re.MULTILINE | re.DOTALL)
+KIND_BASIC = "basic"
+KIND_CLOZE = "cloze"
+KIND_IMAGE_OCCLUSION = "image_occlusion"
+
+HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
+YAML_LINE_RE = re.compile(r"^(?:[a-zA-Z0-9_-]+\s*:|\s*-\s+|\s*$)")
 CLOZE_MARKER_RE = re.compile(r"\{\{c\d+::")
-YAML_LINE_RE = re.compile(r"^([a-zA-Z0-9_-]+\s*:|\s*-\s+|\s+[^\n]*|\s*#|\s*$)")
+FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})\s*([a-zA-Z0-9_-]*)\s*$")
+FENCED_CODE_BLOCK_RE = re.compile(r"```[\s\S]*?```")
+CODE_KEYWORDS = ("def ", "class ", "import ", "return ", "public ", "void ", "function ")
+EQL_PREFIX = "EQL: "
 
 
 @dataclass
 class Diagnostic:
     file: Path
-    line: int  # 1-based; 0 when the whole file or folder is meant
-    level: str  # LEVEL_ERROR | LEVEL_WARNING | LEVEL_INFO
+    line: int
+    level: str  # info | warning | error
     message: str
 
 
@@ -43,7 +41,7 @@ class Card:
     line: int  # 1-based line number of the question
     question: str  # raw markdown; EQL lines joined with "\n"
     answer: str  # raw markdown
-    tag: str  # merged hierarchical tag, e.g. SUTD::50.054_Compiler::Lectures::W01_Intro::Parsing
+    tag: str  # merged hierarchical tag, e.g. TopicA::SubtopicB::Grammars
     kind: str = KIND_BASIC
     added: bool = False
     card_id: str | None = None
@@ -75,11 +73,20 @@ def parse_file(
     diagnostics: list[Diagnostic] | None = None,
     file_tag: str | None = None,
     deck: str | None = None,
+    pad_single_digits: bool = True,
 ) -> list[Card]:
     with open(path, "r", encoding="utf-8", newline="") as f:
         text = f.read()
     newline = "\r\n" if "\r\n" in text else "\n"
-    return parse_lines(text.split(newline), path, base_tag, file_tag=file_tag, diagnostics=diagnostics, deck=deck)
+    return parse_lines(
+        text.split(newline),
+        path,
+        base_tag,
+        file_tag=file_tag,
+        diagnostics=diagnostics,
+        deck=deck,
+        pad_single_digits=pad_single_digits,
+    )
 
 
 def _find_frontmatter_end(lines: list[str]) -> int:
@@ -98,8 +105,15 @@ def _find_frontmatter_end(lines: list[str]) -> int:
     return 0
 
 
-def parse_lines(lines: list[str], file: Path, base_tag: str, file_tag: str | None = None,
-                diagnostics: list[Diagnostic] | None = None, deck: str | None = None) -> list[Card]:
+def parse_lines(
+    lines: list[str],
+    file: Path,
+    base_tag: str,
+    file_tag: str | None = None,
+    diagnostics: list[Diagnostic] | None = None,
+    deck: str | None = None,
+    pad_single_digits: bool = True,
+) -> list[Card]:
     """Parse the lines of one note. ``base_tag`` is the tag hierarchy above the file (may be empty)."""
     diagnostics = diagnostics if diagnostics is not None else []
     tags: list[str] = [t for t in [base_tag, file_tag or file.stem] if t]
@@ -118,8 +132,19 @@ def parse_lines(lines: list[str], file: Path, base_tag: str, file_tag: str | Non
     def flush() -> None:
         nonlocal question, answer_lines, orphan_lines, added, card_id
         if question is not None:
-            cards.append(_make_card(file, question_line, question, "\n".join(answer_lines), merge_tags(tags),
-                                    added, card_id, diagnostics, deck=deck))
+            cards.append(
+                _make_card(
+                    file,
+                    question_line,
+                    question,
+                    "\n".join(answer_lines),
+                    merge_tags(tags, pad_single_digits=pad_single_digits),
+                    added,
+                    card_id,
+                    diagnostics,
+                    deck=deck,
+                )
+            )
         elif any(text.strip() for _, text in orphan_lines):
             first = next(number for number, text in orphan_lines if text.strip())
             diagnostics.append(Diagnostic(file, first, LEVEL_ERROR, "text outside a card (no question line after '---')"))
@@ -171,20 +196,51 @@ def tags_after_heading(depth: int, heading: str, tags: list[str], fixed_levels: 
     return tags[:fixed_levels + depth - 1] + [heading]
 
 
-def merge_tags(tags: list[str]) -> str:
-    """``["SUTD", "50.054", "W01"]`` -> ``SUTD::50.054::W01``, zero-padding single-digit chapter numbers."""
-    parts = []
+def format_tag_segment(raw: str, pad_single_digits: bool = True) -> str:
+    """Format an unaliased tag segment, optionally padding single-digit numbers.
+
+    Restricts single-digit padding to numbers that are isolated or immediately
+    followed by a delimiter (., _, -, or whitespace), preventing false positives
+    on alphanumeric terms like '2D Geometry', '3D Printing', '1st Law'.
+    Preserves inner dots (e.g. '50.054') while converting numbering dot-spaces
+    ('. ') into underscores.
+    """
+    if not raw:
+        return ""
+    seg = raw.strip()
+    if pad_single_digits:
+        seg = re.sub(r"^([1-9])(?=$|[._\-\s]\s*)", r"0\1", seg)
+    seg = seg.replace(". ", "_").replace(" ", "_")
+    return re.sub(r"_+", "_", seg).strip("_")
+
+
+def merge_tags(tags: list[str], pad_single_digits: bool = True) -> str:
+    """Merge tag parts into an Anki tag hierarchy separated by '::'."""
+    parts: list[str] = []
     for tag in tags:
         if not tag:
             continue
-        if tag[0].isdigit() and tag[0] != "0" and (len(tag) == 1 or not tag[1].isdigit()):
-            tag = "0" + tag
-        parts.append(tag.replace(". ", "_").replace(" ", "_"))
+        for sub in tag.split("::"):
+            sub = sub.strip()
+            if not sub:
+                continue
+            formatted = format_tag_segment(sub, pad_single_digits=pad_single_digits)
+            if formatted:
+                parts.append(formatted)
     return "::".join(parts)
 
 
-def _make_card(file: Path, line: int, question: str, answer: str, tag: str, added: bool,
-               card_id: str | None, diagnostics: list[Diagnostic], deck: str | None = None) -> Card:
+def _make_card(
+    file: Path,
+    line: int,
+    question: str,
+    answer: str,
+    tag: str,
+    added: bool,
+    card_id: str | None,
+    diagnostics: list[Diagnostic],
+    deck: str | None = None,
+) -> Card:
     answer = _strip_trailing_blank_lines(answer)
     key = question.strip().lower()
     if key == "cloze":
@@ -206,8 +262,19 @@ def _make_card(file: Path, line: int, question: str, answer: str, tag: str, adde
     if kind == KIND_BASIC and not answer.strip():
         diagnostics.append(Diagnostic(file, line, LEVEL_WARNING, "card has an empty answer"))
 
-    return Card(file=file, line=line, question=question, answer=answer, tag=tag, kind=kind, added=added,
-                card_id=card_id, has_code=has_code, has_cloze_markers=has_markers, deck=deck)
+    return Card(
+        file=file,
+        line=line,
+        question=question,
+        answer=answer,
+        tag=tag,
+        kind=kind,
+        added=added,
+        card_id=card_id,
+        has_code=has_code,
+        has_cloze_markers=has_markers,
+        deck=deck,
+    )
 
 
 def _strip_trailing_blank_lines(text: str) -> str:

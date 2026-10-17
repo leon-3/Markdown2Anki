@@ -1,26 +1,26 @@
-"""``m2a init``: an interactive walk through the configuration, written to m2a.toml.
-
-Every answer is pre-filled from the command line options, from a pre-CLI ``.env`` in the current
-directory (migration), or from what a scan of the vault suggests. With ``--yes`` or without a terminal
-the pre-filled values are used as they are.
-"""
+"""``m2a init``: interactive wizard that creates a commented m2a.toml."""
 from __future__ import annotations
 
 import shutil
-from collections.abc import Sequence
 from pathlib import Path
 
 import typer
 
 from .. import ui
-from ..config import (CONFIG_FILE_NAME, TARGETS, Config, Target, config_from_env, render_toml, sanitize_tag,
-                      user_config_path)
+from ..config import (
+    CONFIG_FILE_NAME,
+    Config,
+    Target,
+    TARGETS,
+    config_from_env,
+    render_toml,
+    user_config_path,
+)
 from ..export.ankiconnect import AnkiConnect
 from ..ui import console, escape
 from ._shared import options
 
 LEGACY_ENV = Path(".env")
-SUBDIR_PREFIX = "Anki - "
 
 
 def run(
@@ -48,17 +48,17 @@ def run(
     vault = _ask_vault(vault or options(ctx).vault or (seed.vault if seed.source else None), interactive)
     if vault is None:
         return 2
-    courses = _course_folders(vault, seed.ignore)
-    if not courses:
-        ui.error(f"no course folders in {vault}", "expected <vault>/<course>/Anki - Lectures/*.md")
-        return 2
 
-    cfg = Config(vault=vault.resolve(), deck=deck or seed.deck, base_tag=seed.base_tag if base_tag is None else base_tag,
-                 output_dir=output_dir or _default_output_dir(here), target=target.value if target else seed.target,
-                 ignore=seed.ignore, subdirectories=seed.subdirectories)
-    cfg.subjects = _ask_subjects(courses, seed.subjects, interactive)
-    cfg.subdirectories = _ask_subdirectories(vault, cfg.subjects, seed.subdirectories, interactive)
-    cfg.display = {tag: folder for folder, tag in cfg.subjects.items()}
+    cfg = Config(
+        vault=vault.resolve(),
+        deck=deck or seed.deck,
+        base_tag=seed.base_tag if base_tag is None else base_tag,
+        output_dir=output_dir or _default_output_dir(here),
+        target=target.value if target else seed.target,
+        ignore=seed.ignore,
+        deck_routing=dict(seed.deck_routing),
+        tag_aliases=dict(seed.tag_aliases),
+    )
     if interactive:
         _ask_anki(cfg)
     _check_ankiconnect(cfg)
@@ -109,44 +109,6 @@ def _ask_vault(preset: Path | None, interactive: bool) -> Path | None:
             return None
 
 
-def _course_folders(vault: Path, ignore: Sequence[str]) -> list[str]:
-    return sorted(p.name for p in vault.iterdir() if p.is_dir() and not p.name.startswith(".") and p.name not in ignore)
-
-
-def _ask_subjects(courses: list[str], seed: dict[str, str], interactive: bool) -> dict[str, str]:
-    """Which top-level folders are courses, and the tag each one gets."""
-    _section("Courses (top-level folders of the vault)", interactive)
-    chosen = [c for c in courses if c in seed] or courses
-    if interactive:
-        chosen = ui.ask_checkbox("Which folders are courses?", courses, checked=chosen)
-    return {folder: _ask_tag(folder, seed.get(folder) or _suggest_course_tag(folder), interactive) for folder in chosen}
-
-
-def _ask_subdirectories(vault: Path, subjects: dict[str, str], seed: dict[str, str],
-                        interactive: bool) -> dict[str, str]:
-    """Which folders inside the courses hold notes, and the tag each one gets."""
-    _section("Note folders (inside each course)", interactive)
-    found: dict[str, int] = {}
-    for course in subjects:
-        for sub in (vault / course).iterdir():
-            if sub.is_dir() and not sub.name.startswith("."):
-                found[sub.name] = found.get(sub.name, 0) + len(list(sub.glob("*.md")))
-    names = sorted(found)
-    if not names:
-        console.print("  [dim]no subfolders found yet; keeping the defaults[/]")
-        return dict(seed)
-
-    chosen = [n for n in names if n in seed] or [n for n in names if found[n]] or names
-    if interactive:
-        labels = [f"{name}  ({found[name]} notes)" for name in names]
-        chosen = ui.ask_checkbox("Which folders hold flashcard notes?", names, checked=chosen, labels=labels)
-    return {name: _ask_tag(name, seed.get(name) or _suggest_subdirectory_tag(name), interactive) for name in chosen}
-
-
-def _ask_tag(folder: str, suggestion: str, interactive: bool) -> str:
-    return ui.ask_text(f"Tag for '{folder}'", suggestion) if interactive else suggestion
-
-
 def _ask_anki(cfg: Config) -> None:
     _section("Anki", True)
     cfg.deck = ui.ask_text("Deck (use :: for subdecks)", cfg.deck)
@@ -181,7 +143,6 @@ def _write(cfg: Config, target_path: Path, force: bool, migrated: bool) -> None:
     console.print(f"[green]✓[/] wrote [bold]{escape(str(target_path))}[/]"
                   + ("  [dim](migrated from .env)[/]" if migrated else ""))
     console.print(f"  [dim]vault[/]    {escape(str(cfg.vault))}")
-    console.print(f"  [dim]courses[/]  {escape(', '.join(cfg.subjects.values()))}")
     console.print(f"  [dim]deck[/]     {escape(cfg.deck)}")
     console.print(f"  [dim]target[/]   {cfg.target}")
     console.print()
@@ -189,19 +150,3 @@ def _write(cfg: Config, target_path: Path, force: bool, migrated: bool) -> None:
     console.print("  [cyan]m2a check[/]           see problems before exporting")
     console.print("  [cyan]m2a status[/]          counts per course")
     console.print("  [cyan]m2a sync --dry-run[/]  preview the first export")
-
-
-# --- helpers --------------------------------------------------------------------------------------
-
-
-def _suggest_course_tag(folder: str) -> str:
-    """``50.054 Compiler Design and Program Analysis`` -> ``50.054_Compiler``: course code plus first word."""
-    words = folder.split()
-    if len(words) >= 2 and any(ch.isdigit() for ch in words[0]):
-        return sanitize_tag(f"{words[0]} {words[1]}")
-    return sanitize_tag(folder)
-
-
-def _suggest_subdirectory_tag(name: str) -> str:
-    """``Anki - Lectures`` -> ``Lectures``."""
-    return sanitize_tag(name[len(SUBDIR_PREFIX):] if name.startswith(SUBDIR_PREFIX) else name)
