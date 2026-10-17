@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ..build import MODEL_CLOZE, BuildResult, RenderedNote
+from ..build import MODEL_CLOZE, MODEL_IMAGE_OCCLUSION, BuildResult, RenderedNote
 from ..config import Config
 from ..ids import anki_note_id, is_anki_note_id, new_card_id, search_query, with_marker
 from ..models import (
@@ -22,7 +22,7 @@ from ..models import (
     Template,
     load_template,
 )
-from ..parser import LEVEL_ERROR, LEVEL_WARNING, Card, Diagnostic
+from ..parser import KIND_IMAGE_OCCLUSION, LEVEL_ERROR, LEVEL_WARNING, Card, Diagnostic
 
 Flags = list[tuple[Card, str]]
 
@@ -194,14 +194,26 @@ class AnkiExport:
 
 
 def _model_kind(model: str) -> str:
+    if model == MODEL_IMAGE_OCCLUSION:
+        return KIND_IMAGE_OCCLUSION
     return KIND_CLOZE if model == MODEL_CLOZE else KIND_BASIC
 
 
 def _back_field(note: RenderedNote) -> str:
+    if note.model == MODEL_IMAGE_OCCLUSION:
+        return "Comments"
     return "Back Extra" if note.model == MODEL_CLOZE else "Back"
 
 
 def _fields(note: RenderedNote, card_id: str, front_name: str = "Front", back_name: str = "Back") -> dict[str, str]:
+    if note.model == MODEL_IMAGE_OCCLUSION:
+        return {
+            "Occlusion": note.fields[0] if note.fields[0] else "{{c1::}}",
+            "Image": note.fields[1] if len(note.fields) > 1 else "",
+            "Header": note.fields[2] if len(note.fields) > 2 else "",
+            "Back Extra": note.fields[3] if len(note.fields) > 3 else "",
+            "Comments": with_marker(note.fields[4] if len(note.fields) > 4 else "", card_id),
+        }
     back = with_marker(note.fields[1], card_id)
     return {front_name: note.fields[0], back_name: back}
 
@@ -300,7 +312,10 @@ def export_ankiconnect(
             to_update.append((note, new_card_id(), anki_note_id(card_id)))
             continue
         kind = _model_kind(note.model)
-        _, back_name = model_field_names.get(kind, ("Front", "Back"))
+        if note.model == MODEL_IMAGE_OCCLUSION:
+            back_name = "Comments"
+        else:
+            _, back_name = model_field_names.get(kind, ("Front", "Back"))
         candidates.append((note, card_id, back_name))
 
     if candidates:
@@ -341,9 +356,13 @@ def export_ankiconnect(
     notes_needing_media: list[RenderedNote] = [n for n, _ in to_add]
 
     for note, card_id, note_id in to_update:
-        kind = _model_kind(note.model)
-        front_name, back_name = model_field_names.get(kind, ("Front", "Back"))
-        new_fields = _fields(note, card_id, front_name, back_name)
+        if note.model == MODEL_IMAGE_OCCLUSION:
+            front_name, back_name = "Header", "Comments"
+            new_fields = _fields(note, card_id)
+        else:
+            kind = _model_kind(note.model)
+            front_name, back_name = model_field_names.get(kind, ("Front", "Back"))
+            new_fields = _fields(note, card_id, front_name, back_name)
 
         info = info_by_id.get(note_id)
         if info is not None and "fields" in info:
@@ -353,10 +372,21 @@ def export_ankiconnect(
                 for k, v in raw_existing_fields.items()
             }
             existing_tags = set(info.get("tags") or [])
-            fields_changed = any(
-                normalize_field_html(new_fields.get(fname, "")) != normalize_field_html(existing_fields.get(fname, ""))
-                for fname in new_fields
-            )
+            if note.model == MODEL_IMAGE_OCCLUSION:
+                new_fields["Occlusion"] = existing_fields.get("Occlusion", "{{c1::}}")
+                new_fields["Image"] = existing_fields.get("Image", new_fields.get("Image", ""))
+                if getattr(cfg, "freeze_image_occlusions", False):
+                    fields_changed = False
+                else:
+                    fields_changed = any(
+                        normalize_field_html(new_fields.get(fname, "")) != normalize_field_html(existing_fields.get(fname, ""))
+                        for fname in ("Header", "Back Extra")
+                    )
+            else:
+                fields_changed = any(
+                    normalize_field_html(new_fields.get(fname, "")) != normalize_field_html(existing_fields.get(fname, ""))
+                    for fname in new_fields
+                )
         else:
             raw_tags = client.invoke("getNoteTags", note=note_id) or []
             existing_tags = set(raw_tags)
@@ -473,7 +503,10 @@ def export_ankiconnect(
                     client.invoke(act["action"], **act.get("params", {}))
 
     if to_add:
-        model_names = {MODEL_CLOZE: models[KIND_CLOZE]}
+        model_names = {
+            MODEL_CLOZE: models[KIND_CLOZE],
+            MODEL_IMAGE_OCCLUSION: "Image Occlusion",
+        }
         payloads = [
             {
                 "deckName": n.deck or default_deck_name,
@@ -494,7 +527,12 @@ def export_ankiconnect(
         for d in target_decks:
             client.ensure_deck(d)
 
-        for (note, card_id), note_id in zip(to_add, client.invoke("addNotes", notes=payloads)):
+        note_ids = client.invoke("addNotes", notes=payloads)
+        suspend_new_occlusions = getattr(cfg, "suspend_new_occlusions", True) if cfg else True
+        suspend_new_clozes = getattr(cfg, "suspend_new_clozes", False) if cfg else False
+        notes_to_suspend: list[int] = []
+
+        for (note, card_id), note_id in zip(to_add, note_ids):
             if note_id is None:
                 diag_list.append(Diagnostic(note.card.file, note.card.line, LEVEL_ERROR,
                                             "Anki refused the note (empty front field?); not added"))
@@ -502,6 +540,20 @@ def export_ankiconnect(
                 continue
             export.flags.append((note.card, card_id))
             export.added += 1
+            if (note.model == MODEL_IMAGE_OCCLUSION and suspend_new_occlusions) or                (note.model == MODEL_CLOZE and suspend_new_clozes):
+                notes_to_suspend.append(note_id)
+
+        if notes_to_suspend:
+            try:
+                card_ids_to_suspend = []
+                for nid in notes_to_suspend:
+                    cids = client.invoke("findCards", query=f"nid:{nid}")
+                    if isinstance(cids, list):
+                        card_ids_to_suspend.extend(cids)
+                if card_ids_to_suspend:
+                    client.invoke("suspend", cards=card_ids_to_suspend)
+            except Exception:
+                pass
     else:
         client.ensure_deck(default_deck_name)
 

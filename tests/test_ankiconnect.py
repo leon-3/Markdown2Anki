@@ -507,3 +507,17 @@ def test_ankiconnect_changes_deck_on_sync(anki):
     assert change_deck_calls[0]["cards"] == [5001]
     assert change_deck_calls[0]["deck"] == "NewDeck"
     assert fake.card_decks[5001] == "NewDeck"
+
+
+def test_ankiconnect_exports_native_image_occlusion_and_suspends(anki):
+    fake = anki({"Basic": 1234, "Image Occlusion": 5678})
+    cfg = Config(vault=Path("."), deck="D", suspend_new_occlusions=True)
+    card = Card(file=Path("io.md"), line=1, question="Image Cloze", answer="![[brain.png]]", tag="Anatomy")
+    note = RenderedNote(card, "image_occlusion", ["", '<img src="brain.png">', "Header", "Extra", ""], ["Anatomy", "TODO_PROCESS_OCCLUSION"])
+    export = ankiconnect.export_ankiconnect(BuildResult(notes=[note]), cfg, [])
+    assert export.added == 1
+    add_payload = fake.params("addNotes")[0]["notes"][0]
+    assert add_payload["modelName"] == "Image Occlusion"
+    assert add_payload["fields"]["Occlusion"] == "{{c1::}}"
+    assert "<img src=" in add_payload["fields"]["Image"]
+    assert "TODO_PROCESS_OCCLUSION" in add_payload["tags"]
