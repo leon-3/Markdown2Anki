@@ -10,7 +10,7 @@ from ..build import BuildResult, build
 from ..config import Config, Target
 from ..export.ankiconnect import AnkiConnectError, export_ankiconnect
 from ..export.apkg import drop_unsupported_updates, export_apkg
-from ..flags import write_flags
+from ..flags import write_deleted_flags, write_flags
 from ..occlusions import export_occlusions
 from ..parser import KIND_IMAGE_OCCLUSION, Card, Diagnostic
 from ..ui import console, escape
@@ -27,6 +27,8 @@ def run(
                                                                 "AnkiConnect (default: 'target' in config)."),
     update: bool = typer.Option(False, "--update", help="Also re-export cards that were already added with an id "
                                                         "(updates them in Anki)."),
+    mark_deleted: bool = typer.Option(False, "--mark-deleted", help="Mark cards missing in Anki as DELETED in markdown notes."),
+    recreate_missing: bool = typer.Option(False, "--recreate-missing", help="Recreate cards in Anki that were deleted in Anki."),
     dry_run: bool = typer.Option(False, "-n", "--dry-run", help="Show what would be exported, write nothing."),
     no_flag: bool = typer.Option(False, "--no-flag", help="Export but do not write ADDED flags into the notes."),
     yes: bool = typer.Option(False, "-y", "--yes", help="Do not ask before writing ADDED flags."),
@@ -37,9 +39,10 @@ def run(
     cfg = load(ctx)
     collected = collect(cfg, course, trace_fn=ui.trace)
     should_stage_occ = stage_occlusions or cfg.re_stage_occlusions
+    should_check_existing = update or mark_deleted or recreate_missing
     selected = [
         c for c in collected.cards
-        if c.pending or (update and c.updatable and (c.kind != KIND_IMAGE_OCCLUSION or should_stage_occ))
+        if c.pending or (should_check_existing and c.updatable and (c.kind != KIND_IMAGE_OCCLUSION or should_stage_occ))
     ]
     chosen_target = target.value if target else cfg.target
     effective_occ_mode = cfg.image_occlusion_mode if chosen_target != Target.apkg.value else "stage"
@@ -73,11 +76,20 @@ def run(
         return 0
 
     seen = len(collected.diagnostics)
-    flags = _export(chosen_target, result, cfg, output, collected.diagnostics)
+    flags, missing = _export(chosen_target, result, cfg, output, collected.diagnostics, recreate_missing=recreate_missing)
     if flags is None:
         return 2
     print_diagnostics(collected.diagnostics[seen:], cfg)
     _flag(flags, no_flag, yes)
+
+    if missing:
+        if mark_deleted:
+            flagged, problems = write_deleted_flags(missing)
+            console.print(f"  [green]✓[/] marked [bold]{flagged}[/] card(s) as DELETED in {len({c.file for c in missing})} note(s)")
+            for problem in problems:
+                console.print(f"  [yellow]![/] {problem}")
+        else:
+            console.print(f"  [dim]({len(missing)} missing card(s) skipped in Anki; run `m2a sync --mark-deleted` to mark them in vault)[/]")
     return 0
 
 
@@ -97,14 +109,14 @@ def _print_staged_occlusions(staged: dict[str, list[str]]) -> None:
 
 
 def _export(target: str, result: BuildResult, cfg: Config, output: Path | None,
-            diagnostics: list[Diagnostic]) -> Flags | None:
-    """Run the exporter and report; None when it failed."""
+            diagnostics: list[Diagnostic], recreate_missing: bool = False) -> tuple[Flags | None, list[Card]]:
+    """Run the exporter and report; (None, []) when it failed."""
     if target == Target.anki.value:
         try:
-            export = export_ankiconnect(result, cfg, diagnostics)
+            export = export_ankiconnect(result, cfg, diagnostics, recreate_missing=recreate_missing)
         except AnkiConnectError as exc:
             ui.error(str(exc), "open Anki (with the AnkiConnect add-on) and retry, or use `m2a sync --target apkg`")
-            return None
+            return None, []
         parts = [f"[bold]{export.added}[/] added", f"[bold]{export.updated}[/] updated"]
         if export.unchanged:
             parts.append(f"[dim]{export.unchanged} unchanged[/]")
@@ -118,7 +130,7 @@ def _export(target: str, result: BuildResult, cfg: Config, output: Path | None,
             console.print(f"  [green]✓[/] staged [bold]{len(result.occlusions)}[/] image occlusion(s) to "
                           f"[bold]{escape(str(occ_dir))}[/]")
             _print_staged_occlusions(staged)
-        return export.flags
+        return export.flags, export.missing_in_anki
 
     export = export_apkg(result, output or cfg.apkg_path, cfg=cfg)
     console.print(f"  [green]✓[/] wrote [bold]{escape(str(export.path))}[/]  "
@@ -126,7 +138,7 @@ def _export(target: str, result: BuildResult, cfg: Config, output: Path | None,
     if export.occlusion_dir and export.staged_occlusions:
         console.print(f"  [dim]image occlusion sources:[/] {escape(str(export.occlusion_dir))}")
         _print_staged_occlusions(export.staged_occlusions)
-    return export.flags
+    return export.flags, []
 
 
 def _flag(flags: Flags, no_flag: bool, yes: bool) -> None:

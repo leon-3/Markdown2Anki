@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from .ids import MARKER_RE, parse_added
+from .ids import MARKER_RE, parse_added, parse_card_prefix
 
 LEVEL_INFO = "info"
 LEVEL_WARNING = "warning"
@@ -45,6 +45,7 @@ class Card:
     tag: str  # merged hierarchical tag, e.g. TopicA::SubtopicB::Grammars
     kind: str = KIND_BASIC
     added: bool = False
+    deleted: bool = False
     card_id: str | None = None
     has_code: bool = False
     has_cloze_markers: bool = False
@@ -52,12 +53,12 @@ class Card:
 
     @property
     def pending(self) -> bool:
-        return not self.added
+        return not self.added and not self.deleted
 
     @property
     def updatable(self) -> bool:
         """Already exported with an id, so it can be pushed again as an update."""
-        return self.added and self.card_id is not None
+        return self.added and not self.deleted and self.card_id is not None
 
     @property
     def location(self) -> str:
@@ -137,12 +138,13 @@ def parse_lines(
     question_line = 0
     question: str | None = None
     added = False
+    deleted = False
     card_id: str | None = None
     answer_lines: list[str] = []
     orphan_lines: list[tuple[int, str]] = []  # (line number, text) outside any card
 
     def flush() -> None:
-        nonlocal question, answer_lines, orphan_lines, added, card_id
+        nonlocal question, answer_lines, orphan_lines, added, deleted, card_id
         if question is not None:
             cards.append(
                 _make_card(
@@ -155,12 +157,13 @@ def parse_lines(
                     card_id,
                     diagnostics,
                     deck=deck,
+                    deleted=deleted,
                 )
             )
         elif any(text.strip() for _, text in orphan_lines):
             first = next(number for number, text in orphan_lines if text.strip())
             diagnostics.append(Diagnostic(file, first, LEVEL_ERROR, "text outside a card (no question line after '---')"))
-        question, answer_lines, orphan_lines, added, card_id = None, [], [], False, None
+        question, answer_lines, orphan_lines, added, deleted, card_id = None, [], [], False, False, None
 
     frontmatter_end = _find_frontmatter_end(lines)
 
@@ -196,7 +199,7 @@ def parse_lines(
                 # follows before the next separator is an answer without a question.
                 orphan_lines.append((index, line))
                 continue
-            added, card_id, question = parse_added(line)
+            added, deleted, card_id, question = parse_card_prefix(line)
             question_line = index
         elif line.startswith(EQL_PREFIX) and question is not None and not answer_lines:
             question += "\n" + line[len(EQL_PREFIX):]
@@ -276,6 +279,7 @@ def _make_card(
     card_id: str | None,
     diagnostics: list[Diagnostic],
     deck: str | None = None,
+    deleted: bool = False,
 ) -> Card:
     answer = _strip_trailing_blank_lines(answer)
     first_line = question.strip().splitlines()[0].strip().lower() if question.strip() else ""
@@ -312,6 +316,7 @@ def _make_card(
         tag=tag,
         kind=kind,
         added=added,
+        deleted=deleted,
         card_id=card_id,
         has_code=has_code,
         has_cloze_markers=has_markers,

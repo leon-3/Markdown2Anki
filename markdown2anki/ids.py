@@ -21,22 +21,42 @@ _ALPHABET = string.digits + string.ascii_lowercase
 ID_LENGTH = 6
 
 ADDED_PREFIX_RE = re.compile(r"^ADDED(?:\[(?P<bracket_id>[0-9a-f]{8}|n\d+)\])?: ")
+DELETED_PREFIX_RE = re.compile(r"^DELETED(?:\[(?P<bracket_id>[0-9a-f]{8}|n\d+)\])?: ")
 TRAILING_ID_RE = re.compile(r"\s*%%(?P<id>[0-9a-z]{4,12})%%\s*$")
 MARKER_RE = re.compile(r"\s*<!--m2a:[a-zA-Z0-9_-]+-->")
 
 
+def parse_card_prefix(line: str) -> tuple[bool, bool, str | None, str]:
+    """Return (is_added, is_deleted, card_id, question_text_without_markers)."""
+    del_match = DELETED_PREFIX_RE.match(line)
+    if del_match:
+        rest = line[del_match.end():]
+        card_id = del_match.group("bracket_id")
+        trailing = TRAILING_ID_RE.search(rest)
+        if trailing:
+            card_id = trailing.group("id")
+            rest = rest[:trailing.start()]
+        return False, True, card_id, rest
+
+    add_match = ADDED_PREFIX_RE.match(line)
+    if add_match:
+        rest = line[add_match.end():]
+        card_id = add_match.group("bracket_id")
+        trailing = TRAILING_ID_RE.search(rest)
+        if trailing:
+            card_id = trailing.group("id")
+            rest = rest[:trailing.start()]
+        return True, False, card_id, rest
+
+    return False, False, None, line
+
+
 def parse_added(line: str) -> tuple[bool, str | None, str]:
     """Return (is_added, card_id, question_text_without_markers)."""
-    match = ADDED_PREFIX_RE.match(line)
-    if not match:
-        return False, None, line
-    rest = line[match.end():]
-    card_id = match.group("bracket_id")
-    trailing = TRAILING_ID_RE.search(rest)
-    if trailing:
-        card_id = trailing.group("id")
-        rest = rest[:trailing.start()]
-    return True, card_id, rest
+    is_added, _, card_id, rest = parse_card_prefix(line)
+    if is_added:
+        return True, card_id, rest
+    return False, None, line
 
 
 def new_card_id() -> str:
@@ -45,6 +65,10 @@ def new_card_id() -> str:
 
 def flagged_line(question: str, card_id: str) -> str:
     return f"ADDED: {question} %%{card_id}%%"
+
+
+def flagged_deleted_line(question: str, card_id: str) -> str:
+    return f"DELETED: {question} %%{card_id}%%"
 
 
 def is_anki_note_id(card_id: str | None) -> bool:

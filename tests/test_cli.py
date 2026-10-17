@@ -372,3 +372,121 @@ def test_sync_recovers_from_missing_media(tmp_path, capsys):
     assert "skipped 1" in out
     assert "flagged 2 card(s)" in out
     assert (tmp_path / "out" / "MissingMediaTest.apkg").is_file()
+
+def test_orphans_command_and_actions(vault, monkeypatch, capsys):
+    from markdown2anki.export import ankiconnect
+
+    class FakeOrphanAnki:
+        def __init__(self):
+            self.calls = []
+
+        def invoke(self, action, **params):
+            self.calls.append((action, params))
+            if action == "version":
+                return 6
+            if action == "modelNamesAndIds":
+                return {"M2A Basic": 1, "M2A Cloze": 2}
+            if action == "findNotes":
+                return [101, 102]
+            if action == "notesInfo":
+                return [
+                    {
+                        "noteId": 101,
+                        "modelName": "M2A Basic",
+                        "fields": {"Front": {"value": "Active Q"}, "Back": {"value": "Active A<!--m2a:act101-->"}},
+                        "cards": [1001],
+                    },
+                    {
+                        "noteId": 102,
+                        "modelName": "M2A Basic",
+                        "fields": {"Front": {"value": "Orphan Q"}, "Back": {"value": "Orphan A<!--m2a:orph999-->"}},
+                        "cards": [1002],
+                    },
+                ]
+            if action == "suspend":
+                return True
+            if action == "deleteNotes":
+                return True
+            return None
+
+    fake = FakeOrphanAnki()
+    monkeypatch.setattr(ankiconnect.AnkiConnect, "invoke", lambda self, action, **p: fake.invoke(action, **p))
+    monkeypatch.setattr(ankiconnect.AnkiConnect, "reachable", lambda self: True)
+
+    v, cfg_path = vault
+    note = v / "50.054 Compiler" / "Anki - Lectures" / "W01 Intro.md"
+    content = note.read_text(encoding="utf-8") + "\n---\nADDED: Active Q %%act101%%\nActive A\n"
+    note.write_text(content, encoding="utf-8")
+
+    # 1. Inspect orphans
+    assert run("-c", cfg_path, "orphans") == 0
+    out = capsys.readouterr().out
+    assert "orph999" in out
+    assert "Orphan Q" in out
+
+    # 2. Suspend orphans
+    assert run("-c", cfg_path, "orphans", "--suspend") == 0
+    out = capsys.readouterr().out
+    assert "Suspended 1 card(s)" in out
+    assert any(a == "suspend" and p.get("cards") == [1002] for a, p in fake.calls)
+
+    # 3. Delete orphans with confirmation
+    assert run("-c", cfg_path, "orphans", "--delete", "--yes") == 0
+    out = capsys.readouterr().out
+    assert "Permanently deleted 1 orphaned note(s)" in out
+    assert any(a == "deleteNotes" and p.get("notes") == [102] for a, p in fake.calls)
+
+
+def test_sync_mark_deleted_and_recreate_missing(tmp_path, monkeypatch, capsys):
+    from markdown2anki.export import ankiconnect
+
+    v = tmp_path / "vault"
+    v.mkdir()
+    (v / "Notes").mkdir()
+    note_file = v / "Notes" / "test.md"
+    note_content = "---\nADDED: Question Missing %%miss111%%\nAnswer Missing\n"
+    note_file.write_text(note_content, encoding="utf-8")
+    cfg_file = tmp_path / "m2a.toml"
+    cfg = Config(vault=v, package_name="Test", output_dir=tmp_path / "out", target="anki")
+    cfg_file.write_text(render_toml(cfg), encoding="utf-8")
+
+    class FakeSyncAnki:
+        def __init__(self):
+            self.calls = []
+
+        def invoke(self, action, **params):
+            self.calls.append((action, params))
+            if action == "version":
+                return 6
+            if action == "modelNamesAndIds":
+                return {"M2A Basic": 1, "M2A Cloze": 2}
+            if action == "findNotes":
+                return []  # Not found in Anki!
+            if action == "modelFieldNames":
+                return ["Front", "Back"]
+            if action == "addNotes":
+                return [5001]
+            return None
+
+    fake = FakeSyncAnki()
+    monkeypatch.setattr(ankiconnect.AnkiConnect, "invoke", lambda self, action, **p: fake.invoke(action, **p))
+    monkeypatch.setattr(ankiconnect.AnkiConnect, "reachable", lambda self: True)
+
+    # 1. By default, missing cards are skipped and hint is shown
+    assert run("-c", cfg_file, "sync", "--update") == 0
+    out = capsys.readouterr().out
+    assert "missing card(s) skipped in Anki" in out
+    assert "ADDED: Question Missing %%miss111%%" in note_file.read_text(encoding="utf-8")
+
+    # 2. With --mark-deleted, card is marked DELETED: in note
+    assert run("-c", cfg_file, "sync", "--update", "--mark-deleted") == 0
+    out = capsys.readouterr().out
+    assert "marked 1 card(s) as DELETED" in out
+    assert "DELETED: Question Missing %%miss111%%" in note_file.read_text(encoding="utf-8")
+
+    # 3. With --recreate-missing (revert to ADDED first)
+    note_file.write_text(note_content, encoding="utf-8")
+    assert run("-c", cfg_file, "sync", "--recreate-missing", "--yes") == 0
+    out = capsys.readouterr().out
+    assert "1 added" in out
+    assert any(a == "addNotes" for a, p in fake.calls)

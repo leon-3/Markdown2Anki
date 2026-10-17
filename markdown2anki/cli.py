@@ -12,7 +12,7 @@ except ImportError:  # older typer depends on the click package
     from click import exceptions as click_exceptions
 
 from . import __version__, ui
-from .commands import init, inspect, sync, templates, unflag
+from .commands import init, inspect, orphans, sync, templates, unflag
 from .commands._shared import GlobalOptions
 from .config import CONFIG_FILE_NAME, user_config_path
 
@@ -48,6 +48,7 @@ app.command("check", help="Parse every note and report problems; changes nothing
 app.command("status", help="Per course: cards total / added / pending.")(inspect.status)
 app.command("sync", help="Export pending cards and mark them as added.")(sync.run)
 app.command("unflag", help="Remove ADDED flags so cards are exported again as new cards.")(unflag.run)
+app.command("orphans", help="Detect, suspend, or delete cards in Anki whose source notes were removed from vault.")(orphans.run)
 app.command("templates", help="Compare the local card templates with the note types in Anki and push them "
                               "(AnkiConnect).")(templates.run)
 

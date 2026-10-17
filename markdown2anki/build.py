@@ -140,6 +140,8 @@ def build(
     media_names_checker = _MediaNames()
     media_registry: dict[str, str | bytes] = {}
     for card in cards:
+        if card.deleted:
+            continue
         try:
             if card.kind == KIND_IMAGE_OCCLUSION:
                 if image_occlusion_mode == "native":

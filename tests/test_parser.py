@@ -323,3 +323,57 @@ def test_prose_keywords_do_not_trigger_has_code():
     )
     assert len(cards) == 1
     assert cards[0].has_code is False
+
+def test_deleted_prefix_parsing_and_flagging(tmp_path):
+    from markdown2anki.build import build
+    from markdown2anki.flags import clear_flags, write_deleted_flags, write_flags
+
+    note = tmp_path / "deleted_card.md"
+    content = (
+        "---\n"
+        "DELETED: Question 1 %%k3f9qz%%\n"
+        "Answer 1\n"
+        "---\n"
+        "ADDED: Question 2 %%a1b2c3%%\n"
+        "Answer 2\n"
+    )
+    note.write_text(content, encoding="utf-8")
+
+    cards = parse_file(note, "Base")
+    assert len(cards) == 2
+
+    # Card 1 is deleted
+    assert cards[0].deleted is True
+    assert cards[0].added is False
+    assert cards[0].card_id == "k3f9qz"
+    assert cards[0].question == "Question 1"
+    assert cards[0].pending is False
+    assert cards[0].updatable is False
+
+    # Card 2 is added (regular active card)
+    assert cards[1].deleted is False
+    assert cards[1].added is True
+    assert cards[1].card_id == "a1b2c3"
+    assert cards[1].question == "Question 2"
+    assert cards[1].updatable is True
+
+    # Build skips deleted card
+    res = build(cards, [])
+    assert len(res.notes) == 1
+    assert res.notes[0].card.card_id == "a1b2c3"
+
+    # Test write_deleted_flags converts Card 2 to DELETED:
+    flagged, problems = write_deleted_flags([cards[1]])
+    assert flagged == 1 and not problems
+    reloaded = parse_file(note, "Base")
+    assert reloaded[1].deleted is True
+    assert reloaded[1].card_id == "a1b2c3"
+    assert "DELETED: Question 2 %%a1b2c3%%" in note.read_text(encoding="utf-8")
+
+    # Test clear_flags reverts both cards to clean questions
+    cleared, problems = clear_flags(reloaded)
+    assert cleared == 2 and not problems
+    clean_cards = parse_file(note, "Base")
+    assert clean_cards[0].deleted is False and clean_cards[0].added is False
+    assert clean_cards[1].deleted is False and clean_cards[1].added is False
+

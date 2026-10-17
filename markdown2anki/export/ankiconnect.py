@@ -191,6 +191,7 @@ class AnkiExport:
     unchanged: int = 0
     media_count: int = 0
     flags: Flags = field(default_factory=list)  # (card, id) pairs to write back into the notes
+    missing_in_anki: list[Card] = field(default_factory=list)
 
 
 def _model_kind(model: str) -> str:
@@ -264,6 +265,7 @@ def export_ankiconnect(
     templates_dir: Path | None = None,
     anki_basic_model: str | None = None,
     anki_cloze_model: str | None = None,
+    recreate_missing: bool = False,
 ) -> AnkiExport:
     """Add new notes and update already exported ones in place.
 
@@ -278,6 +280,7 @@ def export_ankiconnect(
     basic_name = anki_basic_model or (cfg.anki_basic_model if cfg is not None else "M2A Basic")
     cloze_name = anki_cloze_model or (cfg.anki_cloze_model if cfg is not None else "M2A Cloze")
     diag_list = diagnostics if diagnostics is not None else []
+    export = AnkiExport()
 
     client = AnkiConnect(url)
     models = resolve_model_names(client, cfg, basic_name, cloze_name)
@@ -336,12 +339,16 @@ def export_ankiconnect(
                 if fb_ids:
                     to_update.append((note, card_id, fb_ids[0]))
                 else:
-                    diag_list.append(Diagnostic(
-                        note.card.file, note.card.line, LEVEL_WARNING,
-                        "not found in Anki (deleted, other profile, or exported before ids "
-                        "were embedded) - `m2a unflag --file ...` to add it again; skipped",
-                    ))
-                    result.skipped.append(note.card)
+                    if recreate_missing:
+                        to_add.append((note, card_id))
+                    else:
+                        export.missing_in_anki.append(note.card)
+                        diag_list.append(Diagnostic(
+                            note.card.file, note.card.line, LEVEL_WARNING,
+                            "not found in Anki (deleted, other profile, or exported before ids "
+                            "were embedded) - `m2a sync --recreate-missing` to add it again, or `--mark-deleted` to mark in vault; skipped",
+                        ))
+                        result.skipped.append(note.card)
 
     info_by_id: dict[int, dict[str, Any]] = {}
     if to_update:
@@ -408,7 +415,6 @@ def export_ankiconnect(
         })
 
     media_map = client.store_media(notes_needing_media, result.media_names)
-    export = AnkiExport()
     export.media_count = len(media_map)
 
     if media_map:
