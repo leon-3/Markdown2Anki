@@ -79,9 +79,9 @@ def run(
     should_stage_occ = stage_occlusions or cfg.re_stage_occlusions
     should_check_existing = update or mark_deleted or recreate_missing
     include_occ = (effective_occ_mode == "native") or should_stage_occ or mark_deleted or recreate_missing
-    selected = [
-        c for c in collected.cards
-        if c.pending or (should_check_existing and c.updatable and (c.kind != KIND_IMAGE_OCCLUSION or include_occ))
+    selected = [\
+        c for c in collected.cards\
+        if c.pending or (should_check_existing and c.updatable and (c.kind != KIND_IMAGE_OCCLUSION or include_occ))\
     ]
     result = build(
         selected,
@@ -107,6 +107,7 @@ def run(
         console.print("  [dim]nothing to export[/]")
         if missing_warning:
             console.print(f"  [yellow]warning:[/] {len(missing_warning)} card(s) were deleted in Anki (still active in vault) - run `m2a sync --mark-deleted` to mark them in vault, or `m2a orphans` to inspect")
+        _print_sync_summary(0, 0, 0, 0, 0)
         return 1 if collected.has_errors else 0
 
     if dry_run:
@@ -142,24 +143,36 @@ def run(
 
 
 def _print_counts(result: BuildResult) -> None:
+    from ..build import MODEL_CLOZE
     new = sum(not n.card.added for n in result.notes)
     updates = sum(n.card.added for n in result.notes)
-    console.print(INDENT + ui.kv([("new", new), ("updates", updates), ("image occlusions", len(result.occlusions)),
-                                  ("skipped", len(result.skipped))]))
+    text_clozes = sum(
+        1 for n in result.notes
+        if (
+            n.model == MODEL_CLOZE
+            or "cloze" in str(n.model).lower()
+            or getattr(n.card, "kind", None) in ("cloze", "Cloze")
+            or getattr(n.card, "has_cloze_markers", False)
+        )
+    )
+    console.print(INDENT + ui.kv([
+        ("new", new),
+        ("updates", updates),
+        ("image occlusions", len(result.occlusions)),
+        ("text clozes", text_clozes),
+        ("skipped", len(result.skipped)),
+    ]))
 
 
 def _print_sync_summary(added: int, basic: int, image_cloze: int, text_cloze: int, updated: int) -> None:
     parts: list[str] = []
     if added > 0:
-        details: list[str] = []
-        if basic > 0:
-            details.append(f"[bold]{basic}[/] basic")
-        if image_cloze > 0:
-            details.append(f"[bold]{image_cloze}[/] image cloze{'s' if image_cloze != 1 else ''}")
-        if text_cloze > 0:
-            details.append(f"[bold]{text_cloze}[/] text cloze{'s' if text_cloze != 1 else ''}")
-        detail_str = f" ({', '.join(details)})" if details else ""
-        parts.append(f"[bold]{added}[/] added{detail_str}")
+        details = [
+            f"[bold]{basic}[/] basic",
+            f"[bold]{image_cloze}[/] image cloze{'s' if image_cloze != 1 else ''}",
+            f"[bold]{text_cloze}[/] text cloze{'s' if text_cloze != 1 else ''}",
+        ]
+        parts.append(f"[bold]{added}[/] added ({', '.join(details)})")
     else:
         parts.append("[dim]0 added[/]")
 
@@ -219,9 +232,20 @@ def _export(target: str, result: BuildResult, cfg: Config, output: Path | None,
         _print_staged_occlusions(export.staged_occlusions)
 
     from ..build import MODEL_BASIC, MODEL_CLOZE, MODEL_IMAGE_OCCLUSION
-    basic = sum(1 for n in result.notes if n.model == MODEL_BASIC and not n.card.added)
-    img_cloze = sum(1 for n in result.notes if n.model == MODEL_IMAGE_OCCLUSION and not n.card.added) + len(result.occlusions)
-    text_cloze = sum(1 for n in result.notes if n.model == MODEL_CLOZE and not n.card.added)
+    basic = sum(1 for n in result.notes if (
+        n.model == MODEL_BASIC
+        and getattr(n.card, "kind", None) not in ("cloze", "Cloze")
+        and not getattr(n.card, "has_cloze_markers", False)
+        and not n.card.added
+    ))
+    img_cloze = sum(1 for n in result.notes if (
+        (n.model == MODEL_IMAGE_OCCLUSION or getattr(n.card, "kind", None) in ("image_occlusion", "Image Occlusion"))
+        and not n.card.added
+    )) + len(result.occlusions)
+    text_cloze = sum(1 for n in result.notes if (
+        (n.model == MODEL_CLOZE or getattr(n.card, "kind", None) in ("cloze", "Cloze") or getattr(n.card, "has_cloze_markers", False))
+        and not n.card.added
+    ))
     total_added = basic + img_cloze + text_cloze
     _print_sync_summary(total_added, basic, img_cloze, text_cloze, 0)
 

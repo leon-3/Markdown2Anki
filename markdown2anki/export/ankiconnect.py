@@ -549,9 +549,22 @@ def export_ankiconnect(
                 continue
             export.flags.append((note.card, card_id))
             export.added += 1
-            if note.model == MODEL_IMAGE_OCCLUSION:
+            is_io = (
+                note.model == MODEL_IMAGE_OCCLUSION
+                or "occlusion" in str(note.model).lower()
+                or getattr(note.card, "kind", None) in ("image_occlusion", "Image Occlusion", KIND_IMAGE_OCCLUSION)
+            )
+            is_cloze = (
+                not is_io and (
+                    note.model == MODEL_CLOZE
+                    or "cloze" in str(note.model).lower()
+                    or getattr(note.card, "kind", None) in ("cloze", "Cloze", KIND_CLOZE)
+                    or getattr(note.card, "has_cloze_markers", False)
+                )
+            )
+            if is_io:
                 export.added_image_cloze += 1
-            elif note.model == MODEL_CLOZE:
+            elif is_cloze:
                 export.added_text_cloze += 1
             else:
                 export.added_basic += 1
