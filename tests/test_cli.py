@@ -513,3 +513,11 @@ def test_sync_mark_deleted_and_recreate_missing(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "1 added" in out
     assert any(a == "addNotes" for a, p in fake.calls)
+
+def test_sync_summary_output(vault, capsys):
+    v, cfg_path = vault
+    assert run("-c", cfg_path, "sync", "--yes", "--target", "apkg") == 0
+    out = capsys.readouterr().out
+    assert "Sync Summary:" in out
+    assert "added" in out
+

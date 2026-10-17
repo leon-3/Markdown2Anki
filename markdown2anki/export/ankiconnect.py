@@ -192,6 +192,9 @@ class AnkiExport:
     media_count: int = 0
     flags: Flags = field(default_factory=list)  # (card, id) pairs to write back into the notes
     missing_in_anki: list[Card] = field(default_factory=list)
+    added_image_cloze: int = 0
+    added_text_cloze: int = 0
+    added_basic: int = 0
 
 
 def _model_kind(model: str) -> str:
@@ -546,6 +549,12 @@ def export_ankiconnect(
                 continue
             export.flags.append((note.card, card_id))
             export.added += 1
+            if note.model == MODEL_IMAGE_OCCLUSION:
+                export.added_image_cloze += 1
+            elif note.model == MODEL_CLOZE:
+                export.added_text_cloze += 1
+            else:
+                export.added_basic += 1
             if (note.model == MODEL_IMAGE_OCCLUSION and suspend_new_occlusions) or                (note.model == MODEL_CLOZE and suspend_new_clozes):
                 notes_to_suspend.append(note_id)
 
