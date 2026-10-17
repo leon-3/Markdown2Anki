@@ -148,16 +148,16 @@ def _print_counts(result: BuildResult) -> None:
                                   ("skipped", len(result.skipped))]))
 
 
-def _print_sync_summary(added: int, text_cloze: int, image_cloze: int, basic: int, updated: int) -> None:
+def _print_sync_summary(added: int, basic: int, image_cloze: int, text_cloze: int, updated: int) -> None:
     parts: list[str] = []
     if added > 0:
         details: list[str] = []
-        if text_cloze > 0:
-            details.append(f"[bold]{text_cloze}[/] text cloze{'s' if text_cloze != 1 else ''}")
-        if image_cloze > 0:
-            details.append(f"[bold]{image_cloze}[/] image cloze{'s' if image_cloze != 1 else ''}")
         if basic > 0:
             details.append(f"[bold]{basic}[/] basic")
+        if image_cloze > 0:
+            details.append(f"[bold]{image_cloze}[/] image cloze{'s' if image_cloze != 1 else ''}")
+        if text_cloze > 0:
+            details.append(f"[bold]{text_cloze}[/] text cloze{'s' if text_cloze != 1 else ''}")
         detail_str = f" ({', '.join(details)})" if details else ""
         parts.append(f"[bold]{added}[/] added{detail_str}")
     else:
@@ -204,10 +204,10 @@ def _export(target: str, result: BuildResult, cfg: Config, output: Path | None,
             _print_staged_occlusions(staged)
 
         total_added = export.added + len(result.occlusions)
+        total_basic = export.added_basic
         total_img_cloze = export.added_image_cloze + len(result.occlusions)
         total_text_cloze = export.added_text_cloze
-        total_basic = export.added_basic
-        _print_sync_summary(total_added, total_text_cloze, total_img_cloze, total_basic, export.updated)
+        _print_sync_summary(total_added, total_basic, total_img_cloze, total_text_cloze, export.updated)
 
         return export.flags, export.missing_in_anki
 
@@ -219,11 +219,11 @@ def _export(target: str, result: BuildResult, cfg: Config, output: Path | None,
         _print_staged_occlusions(export.staged_occlusions)
 
     from ..build import MODEL_BASIC, MODEL_CLOZE, MODEL_IMAGE_OCCLUSION
-    text_cloze = sum(1 for n in result.notes if n.model == MODEL_CLOZE and not n.card.added)
-    img_cloze = sum(1 for n in result.notes if n.model == MODEL_IMAGE_OCCLUSION and not n.card.added) + len(result.occlusions)
     basic = sum(1 for n in result.notes if n.model == MODEL_BASIC and not n.card.added)
-    total_added = text_cloze + img_cloze + basic
-    _print_sync_summary(total_added, text_cloze, img_cloze, basic, 0)
+    img_cloze = sum(1 for n in result.notes if n.model == MODEL_IMAGE_OCCLUSION and not n.card.added) + len(result.occlusions)
+    text_cloze = sum(1 for n in result.notes if n.model == MODEL_CLOZE and not n.card.added)
+    total_added = basic + img_cloze + text_cloze
+    _print_sync_summary(total_added, basic, img_cloze, text_cloze, 0)
 
     return export.flags, []
 
