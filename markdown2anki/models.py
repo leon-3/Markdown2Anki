@@ -1,12 +1,10 @@
 """Anki note types and the card templates they are built from.
 
 Templates are looked up per file in the personal ``templates_dir`` first and fall back to the bundled
-copies under ``markdown2anki/templates``. A template may contain ``__M2A_SUBJECT_SCRIPT__``, which is
-replaced with a script that shows the ``[display]`` title matching the card's tag.
+copies under ``markdown2anki/templates``.
 """
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,7 +28,6 @@ KIND_BASIC = "Basic"
 KIND_CLOZE = "Cloze"
 KIND_IMAGE_OCCLUSION = "Image Occlusion"
 TEMPLATE_FILES = ("front.html", "back.html", "styling.css")
-SUBJECT_SCRIPT_PLACEHOLDER = "__M2A_SUBJECT_SCRIPT__"
 
 BUNDLED_DIR = Path(__file__).parent / "templates"
 
@@ -51,18 +48,10 @@ def template_path(kind: str, name: str, templates_dir: Path | None) -> Path:
     return BUNDLED_DIR / kind / name
 
 
-def subject_script(display: dict[str, str]) -> str:
-    script = (BUNDLED_DIR / "subject_script.html").read_text(encoding="utf-8")
-    return script.replace("__M2A_SUBJECTS__", json.dumps(display, ensure_ascii=False))
-
-
 def load_template(kind: str, display: dict[str, str] | None = None,
                   templates_dir: Path | None = None) -> Template:
-    script = subject_script(display or {})
-
     def read(name: str) -> str:
-        text = template_path(kind, name, templates_dir).read_text(encoding="utf-8")
-        return text.replace(SUBJECT_SCRIPT_PLACEHOLDER, script)
+        return template_path(kind, name, templates_dir).read_text(encoding="utf-8")
 
     return Template(qfmt=read("front.html"), afmt=read("back.html"), css=read("styling.css"))
 
@@ -94,11 +83,9 @@ __all__ = [
     "IMAGE_OCCLUSION_MODEL_NAME",
     "IMAGE_OCCLUSION_FIELDS",
     "TEMPLATE_FILES",
-    "SUBJECT_SCRIPT_PLACEHOLDER",
     "BUNDLED_DIR",
     "Template",
     "template_path",
-    "subject_script",
     "load_template",
     "BasicNote",
     "ClozeNote",

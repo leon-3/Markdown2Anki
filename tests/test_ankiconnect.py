@@ -155,13 +155,13 @@ def test_template_status_and_push(anki):
         return base(action, **params)
     fake.invoke = invoke
 
-    cfg = Config(vault=Path("."), display={"50.054_Compiler": "Compiler"})
+    cfg = Config(vault=Path("."))
     client = ankiconnect.AnkiConnect(cfg.anki_connect_url)
     statuses = ankiconnect.template_status(client, cfg)
     assert [s.name for s in statuses] == ["Basic"] and statuses[0].changed == ["front"]
     ankiconnect.push_template(client, statuses[0])
     update = fake.params("updateModelTemplates")[0]["model"]
-    assert update["name"] == "Basic" and "Compiler" in update["templates"]['Card 1']["Front"]
+    assert update["name"] == "Basic" and update["templates"]['Card 1']["Front"] == local.qfmt
     assert fake.params("updateModelStyling")
 
 

@@ -1,21 +1,23 @@
 .card {
-    font-family: arial;
-    font-size: 20px;
-    text-align: center;
-    color: black;
-    background-color: white;
-}
-.cloze {
-    font-weight: bold;
-    color: blue;
-}
-.nightMode .cloze {
-    color: lightblue;
+  font-family: arial;
+  font-size: 20px;
+  text-align: left;
+  color: black;
+  background-color: white;
 }
 
-.subject {
-  font-family: arial;
-  font-size: 14px;
-  text-align: right;
-  color: #3c81e3;
+.cloze {
+  font-weight: bold;
+  color: blue;
+}
+
+.nightMode .cloze {
+  color: lightblue;
+}
+
+img {
+  width: auto;
+  height: auto;
+  max-width: 800px;
+  max-height: 600px;
 }
