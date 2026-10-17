@@ -8,7 +8,8 @@ import typer
 from .. import ui
 from ..build import BuildResult, build
 from ..config import Config, Target
-from ..export.ankiconnect import AnkiConnectError, export_ankiconnect
+import re
+from ..export.ankiconnect import AnkiConnect, AnkiConnectError, export_ankiconnect, resolve_model_names
 from ..export.apkg import drop_unsupported_updates, export_apkg
 from ..flags import write_deleted_flags, write_flags
 from ..occlusions import export_occlusions
@@ -16,6 +17,41 @@ from ..parser import KIND_IMAGE_OCCLUSION, Card, Diagnostic
 from ..ui import console, escape
 from ..vault import collect
 from ._shared import COURSE_OPTION, INDENT, load, print_card_table, print_diagnostics, print_problems
+
+M2A_MARKER_RE = re.compile(r"<!--m2a:([0-9a-z]{4,12})-->")
+
+
+def _find_missing_in_anki(cfg: Config, cards: list[Card]) -> list[Card]:
+    cards_with_ids = [c for c in cards if c.card_id and not c.deleted]
+    if not cards_with_ids:
+        return []
+    try:
+        client = AnkiConnect(cfg.anki_connect_url)
+        if not client.reachable():
+            return []
+        model_names = list(resolve_model_names(client, cfg).values())
+        for io_name in ("Image Occlusion", "Image Occlusion Enhanced"):
+            if io_name not in model_names:
+                model_names.append(io_name)
+        model_query = " or ".join([f'note:"{n}"' for n in model_names])
+        note_ids = client.invoke("findNotes", query=model_query) or []
+        if not note_ids:
+            return cards_with_ids
+        notes_info = client.notes_info(note_ids)
+        anki_cids: set[str] = set()
+        for info in notes_info:
+            if not isinstance(info, dict) or not info.get("noteId"):
+                continue
+            for f in info.get("fields", {}).values():
+                val = f.get("value", "") if isinstance(f, dict) else str(f)
+                m = M2A_MARKER_RE.search(val)
+                if m:
+                    anki_cids.add(m.group(1))
+                    break
+        return [c for c in cards_with_ids if c.card_id not in anki_cids]
+    except Exception:
+        return []
+
 
 Flags = list[tuple[Card, str]]
 
@@ -38,14 +74,15 @@ def run(
 ) -> int:
     cfg = load(ctx)
     collected = collect(cfg, course, trace_fn=ui.trace)
-    should_stage_occ = stage_occlusions or cfg.re_stage_occlusions
-    should_check_existing = update or mark_deleted or recreate_missing
-    selected = [
-        c for c in collected.cards
-        if c.pending or (should_check_existing and c.updatable and (c.kind != KIND_IMAGE_OCCLUSION or should_stage_occ))
-    ]
     chosen_target = target.value if target else cfg.target
     effective_occ_mode = cfg.image_occlusion_mode if chosen_target != Target.apkg.value else "stage"
+    should_stage_occ = stage_occlusions or cfg.re_stage_occlusions
+    should_check_existing = update or mark_deleted or recreate_missing
+    include_occ = (effective_occ_mode == "native") or should_stage_occ or mark_deleted or recreate_missing
+    selected = [
+        c for c in collected.cards
+        if c.pending or (should_check_existing and c.updatable and (c.kind != KIND_IMAGE_OCCLUSION or include_occ))
+    ]
     result = build(
         selected,
         collected.diagnostics,
@@ -61,8 +98,15 @@ def run(
     if collected.problems:
         print_problems(collected.diagnostics, cfg)
     _print_counts(result)
+
+    missing_warning: list[Card] = []
+    if chosen_target == Target.anki.value and not should_check_existing:
+        missing_warning = _find_missing_in_anki(cfg, collected.cards)
+
     if not result.notes and not result.occlusions:
         console.print("  [dim]nothing to export[/]")
+        if missing_warning:
+            console.print(f"  [yellow]warning:[/] {len(missing_warning)} card(s) were deleted in Anki (still active in vault) - run `m2a sync --mark-deleted` to mark them in vault, or `m2a orphans` to inspect")
         return 1 if collected.has_errors else 0
 
     if dry_run:
@@ -73,6 +117,8 @@ def run(
                          lambda c: "[yellow]update[/]" if c.added else "[green]new[/]", state_header="")
         console.print()
         console.print("  [dim]dry run - nothing written[/]")
+        if missing_warning:
+            console.print(f"  [yellow]warning:[/] {len(missing_warning)} card(s) were deleted in Anki (still active in vault) - run `m2a sync --mark-deleted` to mark them in vault, or `m2a orphans` to inspect")
         return 0
 
     seen = len(collected.diagnostics)
@@ -90,6 +136,8 @@ def run(
                 console.print(f"  [yellow]![/] {problem}")
         else:
             console.print(f"  [dim]({len(missing)} missing card(s) skipped in Anki; run `m2a sync --mark-deleted` to mark them in vault)[/]")
+    elif missing_warning:
+        console.print(f"  [yellow]warning:[/] {len(missing_warning)} card(s) were deleted in Anki (still active in vault) - run `m2a sync --mark-deleted` to mark them in vault, or `m2a orphans` to inspect")
     return 0
 
 

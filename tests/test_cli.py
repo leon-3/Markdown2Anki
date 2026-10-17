@@ -454,11 +454,16 @@ def test_sync_mark_deleted_and_recreate_missing(tmp_path, monkeypatch, capsys):
     v = tmp_path / "vault"
     v.mkdir()
     (v / "Notes").mkdir()
+    img_file = v / "Notes" / "img.png"
+    img_file.write_bytes(b"dummy image data")
     note_file = v / "Notes" / "test.md"
-    note_content = "---\nADDED: Question Missing %%miss111%%\nAnswer Missing\n"
+    note_content = (
+        "---\nADDED: Question Missing %%miss111%%\nAnswer Missing\n"
+        "---\nADDED: Image Cloze %%occ222%%\n![[img.png]]\n"
+    )
     note_file.write_text(note_content, encoding="utf-8")
     cfg_file = tmp_path / "m2a.toml"
-    cfg = Config(vault=v, package_name="Test", output_dir=tmp_path / "out", target="anki")
+    cfg = Config(vault=v, package_name="Test", output_dir=tmp_path / "out", target="anki", image_occlusion_mode="native")
     cfg_file.write_text(render_toml(cfg), encoding="utf-8")
 
     class FakeSyncAnki:
@@ -483,17 +488,24 @@ def test_sync_mark_deleted_and_recreate_missing(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(ankiconnect.AnkiConnect, "invoke", lambda self, action, **p: fake.invoke(action, **p))
     monkeypatch.setattr(ankiconnect.AnkiConnect, "reachable", lambda self: True)
 
+    # 0. Plain sync (no --update) notifies about cards deleted in Anki
+    assert run("-c", cfg_file, "sync") == 0
+    out = capsys.readouterr().out
+    assert "deleted in Anki (still active in vault)" in out
+
     # 1. By default, missing cards are skipped and hint is shown
     assert run("-c", cfg_file, "sync", "--update") == 0
     out = capsys.readouterr().out
     assert "missing card(s) skipped in Anki" in out
     assert "ADDED: Question Missing %%miss111%%" in note_file.read_text(encoding="utf-8")
 
-    # 2. With --mark-deleted, card is marked DELETED: in note
+    # 2. With --mark-deleted, both basic and image occlusion cards are marked DELETED: in note
     assert run("-c", cfg_file, "sync", "--update", "--mark-deleted") == 0
     out = capsys.readouterr().out
-    assert "marked 1 card(s) as DELETED" in out
-    assert "DELETED: Question Missing %%miss111%%" in note_file.read_text(encoding="utf-8")
+    assert "marked 2 card(s) as DELETED" in out
+    txt = note_file.read_text(encoding="utf-8")
+    assert "DELETED: Question Missing %%miss111%%" in txt
+    assert "DELETED: Image Cloze %%occ222%%" in txt
 
     # 3. With --recreate-missing (revert to ADDED first)
     note_file.write_text(note_content, encoding="utf-8")
