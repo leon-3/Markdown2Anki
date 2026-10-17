@@ -420,7 +420,11 @@ def test_orphans_command_and_actions(vault, monkeypatch, capsys):
 
     v, cfg_path = vault
     note = v / "50.054 Compiler" / "Anki - Lectures" / "W01 Intro.md"
-    content = note.read_text(encoding="utf-8") + "\n---\nADDED: Active Q %%act101%%\nActive A\n"
+    content = (
+        note.read_text(encoding="utf-8")
+        + "\n---\nADDED: Active Q %%act101%%\nActive A\n"
+        + "\n---\nADDED: Missing In Anki Q %%miss555%%\nMissing A\n"
+    )
     note.write_text(content, encoding="utf-8")
 
     # 1. Inspect orphans
@@ -428,6 +432,8 @@ def test_orphans_command_and_actions(vault, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "orph999" in out
     assert "Orphan Q" in out
+    assert "miss555" in out
+    assert "Cards Deleted in Anki" in out
 
     # 2. Suspend orphans
     assert run("-c", cfg_path, "orphans", "--suspend") == 0

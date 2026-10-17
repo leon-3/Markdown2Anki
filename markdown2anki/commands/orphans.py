@@ -8,7 +8,7 @@ from .. import ui
 from ..export.ankiconnect import AnkiConnect, AnkiConnectError, resolve_model_names
 from ..ui import console, escape
 from ..vault import collect
-from ._shared import COURSE_OPTION, YES_OPTION, load
+from ._shared import COURSE_OPTION, YES_OPTION, load, rel, short_question
 
 M2A_MARKER_RE = re.compile(r"<!--m2a:([0-9a-z]{4,12})-->")
 
@@ -48,15 +48,19 @@ def run(
 
     notes_info = client.notes_info(note_ids)
     orphaned_notes: list[dict] = []
+    anki_cids: set[str] = set()
 
     for info in notes_info:
-        nid = info["noteId"]
+        nid = info.get("noteId")
+        if not nid:
+            continue
         cid = None
         for fval in info.get("fields", {}).values():
             val = fval.get("value", "") if isinstance(fval, dict) else str(fval)
             m = M2A_MARKER_RE.search(val)
             if m:
                 cid = m.group(1)
+                anki_cids.add(cid)
                 break
         if cid and cid not in vault_card_ids:
             preview = ""
@@ -78,23 +82,42 @@ def run(
                 "cards": info.get("cards", []),
             })
 
-    ui.header("m2a orphans", f"{len(orphaned_notes)} orphaned note(s) in Anki")
+    missing_in_anki = [c for c in collected.cards if c.card_id and not c.deleted and c.card_id not in anki_cids]
 
-    if not orphaned_notes:
-        console.print("  [green]✓[/] All Anki cards match notes in your vault. Zero orphaned cards.")
+    summary_parts = []
+    if orphaned_notes:
+        summary_parts.append(f"{len(orphaned_notes)} orphaned in Anki")
+    if missing_in_anki:
+        summary_parts.append(f"{len(missing_in_anki)} deleted in Anki")
+    summary_text = ", ".join(summary_parts) if summary_parts else "0 issues detected"
+
+    ui.header("m2a orphans", summary_text)
+
+    if not orphaned_notes and not missing_in_anki:
+        console.print("  [green]✓[/] All cards in sync: zero orphaned in Anki, and zero deleted in vault.")
         return 0
 
-    rows = []
-    for o in orphaned_notes:
-        clean_preview = re.sub(r"<[^>]+>", "", o["preview"]).replace("\n", " ").strip()
-        if not clean_preview:
-            clean_preview = f"[{o['model']}]"
-        elif len(clean_preview) > 55:
-            clean_preview = clean_preview[:52] + "..."
-        rows.append([f"[dim]{o['card_id']}[/]", str(o["note_id"]), o["model"], escape(clean_preview)])
+    if orphaned_notes:
+        console.print(f"  [bold]Section 1: Orphaned Cards in Anki (Deleted from Obsidian):[/] {len(orphaned_notes)} note(s)")
+        rows = []
+        for o in orphaned_notes:
+            clean_preview = re.sub(r"<[^>]+>", "", o["preview"]).replace("\n", " ").strip()
+            if not clean_preview:
+                clean_preview = f"[{o['model']}]"
+            elif len(clean_preview) > 55:
+                clean_preview = clean_preview[:52] + "..."
+            rows.append([f"[dim]{o['card_id']}[/]", str(o["note_id"]), o["model"], escape(clean_preview)])
+        console.print(ui.table(["id", "note id", "model", "question"], rows))
+        console.print()
 
-    console.print(ui.table(["id", "note id", "model", "question"], rows))
-    console.print()
+    if missing_in_anki:
+        console.print(f"  [bold]Section 2: Cards Deleted in Anki (Still Active in Obsidian):[/] {len(missing_in_anki)} card(s)")
+        missing_rows = []
+        for c in missing_in_anki:
+            q_text = short_question(c)
+            missing_rows.append([f"[dim]{c.card_id}[/]", escape(f"{rel(c.file, cfg)}:{c.line}"), escape(q_text)])
+        console.print(ui.table(["id", "where", "question"], missing_rows))
+        console.print()
 
     if suspend:
         card_ids_to_suspend = [cid for o in orphaned_notes for cid in o["cards"]]
@@ -112,5 +135,11 @@ def run(
         console.print(f"  [green]✓[/] Permanently deleted [bold]{len(nids_to_delete)}[/] orphaned note(s) from Anki.")
         return 0
 
-    console.print("  [dim]Run with `m2a orphans --suspend` to suspend them, or `m2a orphans --delete` to delete permanently.[/]")
+    hint_parts = []
+    if orphaned_notes:
+        hint_parts.append("`m2a orphans --suspend` or `m2a orphans --delete` for orphaned Anki cards")
+    if missing_in_anki:
+        hint_parts.append("`m2a sync --mark-deleted` (to mark DELETED in vault) or `m2a sync --update --recreate-missing` (to recreate in Anki)")
+    if hint_parts:
+        console.print("  [dim]Run " + " | ".join(hint_parts) + "[/]")
     return 0
