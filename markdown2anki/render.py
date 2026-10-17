@@ -21,17 +21,22 @@ from .formatting import (
     standardize_html,
 )
 
-FENCED_CODE_RE = re.compile(r"^[ \t]*```([^\n]*)\n(.*?)^[ \t]*```[ \t]*$", re.MULTILINE | re.DOTALL)
+FENCED_CODE_RE = re.compile(
+    r"^[ \t]*(`{3,}|~{3,})([^\n]*)\n(.*?)^[ \t]*\1[ \t]*$",
+    re.MULTILINE | re.DOTALL,
+)
 INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
 DISPLAY_MATH_RE = re.compile(r"\$\$(.+?)\$\$", re.DOTALL)
 # Pandoc-style inline math: no space right after the opening $ or before the closing one, and the closing
 # $ must not be followed by a digit -> "$5 and $10" is prose, "$x$" is math. No newlines inside.
 INLINE_MATH_RE = re.compile(r"(?<![\\$])\$(?=\S)((?:[^$\n\\]|\\.)+?)(?<=\S)\$(?![\d$])")
 
-URL_RE = re.compile(r"https?://[^\s<>\"\'\`]+", re.IGNORECASE)
+URL_RE = re.compile(r"https?://[^\s<>\"\'`\ue000\ue001]+", re.IGNORECASE)
 
-TOKEN_FMT = "M2ASTASH{}X"
-TOKEN_RE = re.compile(r"M2ASTASH(\d+)X")
+TOKEN_FMT = "\ue000M2ASTASH{}X\ue001"
+TOKEN_RE = re.compile(r"\ue000M2ASTASH(\d+)X\ue001")
+
+_CLOZE_IN_MATH_RE = re.compile(r"\{\{(c\d+::)")
 
 
 class _Stash:
@@ -43,24 +48,79 @@ class _Stash:
         return TOKEN_FMT.format(len(self.items) - 1)
 
 
+def _protect_clozes_in_math(text: str) -> str:
+    """Protect Anki cloze syntax inside math from brace splitting."""
+    result = []
+    i = 0
+    n = len(text)
+    while i < n:
+        m = _CLOZE_IN_MATH_RE.search(text, i)
+        if not m:
+            result.append(text[i:])
+            break
+        result.append(text[i:m.start()])
+        cloze_num = m.group(1)
+        result.append(f"\x01{cloze_num}")
+        j = m.end()
+        brace_depth = 0
+        found_close = False
+        while j < n:
+            if text[j:j+2] == "}}" and brace_depth == 0:
+                result.append(text[m.end():j])
+                result.append("\x04")
+                j += 2
+                found_close = True
+                break
+            elif text[j] == "{":
+                brace_depth += 1
+                j += 1
+            elif text[j] == "}":
+                if brace_depth > 0:
+                    brace_depth -= 1
+                j += 1
+            else:
+                j += 1
+        if found_close:
+            i = j
+        else:
+            result.append(text[m.end():])
+            break
+    return "".join(result)
+
+
 def _math(text: str) -> str:
     """Math content as HTML text: escape ``<``/``&`` (MathJax reads the rendered DOM text, so ``&lt;`` is
-    fine) and split ``}}`` which would collide with Anki's cloze syntax."""
-    return html.escape(text, quote=False).replace("{{", "{ {").replace("}}", "} }")
+    fine) and split consecutive braces which would collide with Anki's cloze syntax, while protecting
+    any real cloze deletions inside the math."""
+    protected = _protect_clozes_in_math(text)
+    escaped = html.escape(protected, quote=False)
+    escaped = re.sub(r"\{(?=\{)", "{ ", escaped)
+    escaped = re.sub(r"\}(?=\})", "} ", escaped)
+    return escaped.replace("\x01", "{{").replace("\x04", "}}")
 
 
 def _stash_code_and_math(text: str, stash: _Stash) -> str:
     def fenced(match: re.Match[str]) -> str:
-        lang, code = match.group(1).strip(), match.group(2)
+        lang_str = match.group(2).strip()
+        code = match.group(3)
+        lang = lang_str.split()[0] if lang_str else ""
         cls = f' class="language-{lang}"' if lang else ""
         body = html.escape(code.rstrip("\n"))
         return stash.put("code", f"<pre><code{cls}>{body}</code></pre>", block=True)
 
     text = FENCED_CODE_RE.sub(fenced, text)
-    text = INLINE_CODE_RE.sub(lambda m: stash.put("code", f"<code>{html.escape(m.group(1))}</code>", False), text)
-    text = DISPLAY_MATH_RE.sub(lambda m: stash.put("math", "\\[" + _math(m.group(1).strip().strip("$")) + "\\]", True),
-                               text)
-    text = INLINE_MATH_RE.sub(lambda m: stash.put("math", "\\(" + _math(m.group(1)) + "\\)", False), text)
+    text = DISPLAY_MATH_RE.sub(
+        lambda m: stash.put("math", "\\[" + _math(m.group(1).strip().strip("$")) + "\\]", True),
+        text,
+    )
+    text = INLINE_MATH_RE.sub(
+        lambda m: stash.put("math", "\\(" + _math(m.group(1)) + "\\)", False),
+        text,
+    )
+    text = INLINE_CODE_RE.sub(
+        lambda m: stash.put("code", f"<code>{html.escape(m.group(1))}</code>", False),
+        text,
+    )
     return text
 
 
@@ -96,7 +156,8 @@ def autolink_bare_urls(html_text: str) -> str:
 
 
 def _restore(html_text: str, stash: _Stash) -> str:
-    for index, (_, replacement, block) in enumerate(stash.items):
+    for index in range(len(stash.items) - 1, -1, -1):
+        _, replacement, block = stash.items[index]
         token = TOKEN_FMT.format(index)
         if block:
             # A block that stood on its own line was wrapped in <p> and given a <br>; neither belongs.

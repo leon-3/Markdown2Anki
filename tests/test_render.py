@@ -84,3 +84,38 @@ def test_wikilinks_untouched():
     html = render_markdown("See [[Some Note]] and [[Other Note|Alias]]")
     assert "[[Some Note]]" in html
     assert "[[Other Note|Alias]]" in html
+
+
+def test_math_three_consecutive_braces():
+    html = render_markdown("$\\frac{1}{\\sqrt{a_{i}}}$")
+    assert "}}" not in html
+    assert "\\(\\frac{1}{\\sqrt{a_{i} } }\\)" == html
+
+
+def test_cloze_inside_math_preserved():
+    html = render_markdown("Formula: $x = {{c1::5}}$ and $\\frac{1}{ {{c2::y}} }$")
+    assert "{{c1::5}}" in html
+    assert "{{c2::y}}" in html
+
+
+def test_math_nested_stash_with_backticks():
+    # Backticks inside math must not leak M2ASTASH tokens into HTML
+    html = render_markdown("$$\n\\text{`quote'}\n$$")
+    assert "M2ASTASH" not in html
+    assert "\\[\\text{`quote'}\\]" in html
+
+
+def test_fenced_code_tildes_and_four_backticks():
+    html_tilde = render_markdown("~~~python\nprint(1)\n~~~")
+    assert '<pre><code class="language-python">print(1)</code></pre>' == html_tilde
+
+    nested_md = "````markdown\n```python\nx = 1\n```\n````"
+    html_nested = render_markdown(nested_md)
+    assert '<pre><code class="language-markdown">```python\nx = 1\n```</code></pre>' == html_nested
+
+
+def test_bare_url_adjacent_to_inline_code():
+    html = render_markdown("https://example.com/`code`")
+    assert '<a href="https://example.com/">https://example.com/</a>' in html
+    assert "<code>code</code>" in html
+    assert "M2ASTASH" not in html

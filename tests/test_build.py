@@ -213,3 +213,50 @@ def test_build_with_url_encoded_image(tmp_path):
     assert len(result.notes) == 1
     assert result.media == [img_file.resolve()]
     assert '<img src="My Photo 2026.png">' in result.notes[0].fields[1]
+
+
+def test_build_with_standard_markdown_image(tmp_path):
+    note_dir = tmp_path / "notes"
+    note_dir.mkdir(parents=True)
+    img1 = note_dir / "img1.png"
+    img1.write_bytes(b"bytes1")
+    img2 = note_dir / "img2.png"
+    img2.write_bytes(b"bytes2")
+
+    cards = _cards(
+        tmp_path,
+        "notes",
+        "---\nQuestion\n![Alt text](img1.png)\n![300x200](img2.png)\n",
+    )
+    diagnostics = []
+    result = build(cards, diagnostics)
+    assert not diagnostics
+    assert len(result.notes) == 1
+    assert set(result.media) == {img1.resolve(), img2.resolve()}
+    answer = result.notes[0].fields[1]
+    assert "<img src=\"img1.png\" alt=\"Alt text\">" in answer
+    assert "<img src=\"img2.png\" width=\"300\" height=\"200\">" in answer
+
+
+def test_build_code_block_isolates_image_syntax(tmp_path):
+    cards = _cards(
+        tmp_path,
+        "notes",
+        "---\nQuestion\n"
+        "Here is some code:\n"
+        "```markdown\n"
+        "![[non_existent_img.png]]\n"
+        "![alt](missing.png)\n"
+        "```\n"
+        "And inline `![[inline_missing.png]]` code.\n",
+    )
+    diagnostics = []
+    result = build(cards, diagnostics)
+    assert not diagnostics
+    assert len(result.notes) == 1
+    assert result.media == []
+    answer = result.notes[0].fields[1]
+    assert "<img" not in answer
+    assert "![[non_existent_img.png]]" in answer
+    assert "![alt](missing.png)" in answer
+    assert "![[inline_missing.png]]" in answer

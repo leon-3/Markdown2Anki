@@ -98,3 +98,45 @@ def test_config_load_classmethod(tmp_path):
     config_file = vault / CONFIG_FILE_NAME
     loaded = Config.load(config_file)
     assert loaded.deck == "TestDeck"
+
+
+def test_save_vault_config_preserves_relative_paths(tmp_path):
+    vault = tmp_path / "my_vault"
+    vault.mkdir()
+    config_file = vault / CONFIG_FILE_NAME
+
+    # Pre-existing config with relative paths
+    config_file.write_text('vault = "."\noutput_dir = "export"\ndeck = "Initial"\n', encoding="utf-8")
+
+    cfg = load_vault_config(vault)
+    assert cfg.vault == vault
+    assert cfg.output_dir == vault / "export"
+
+    cfg.deck = "Modified"
+    save_vault_config(vault, cfg)
+
+    saved_text = config_file.read_text(encoding="utf-8")
+    assert 'vault = "."' in saved_text
+    assert 'output_dir = "export"' in saved_text
+    assert 'deck = "Modified"' in saved_text
+    # Must NOT have serialized absolute filesystem paths
+    assert str(vault) not in saved_text
+
+
+def test_save_vault_config_new_file_has_comments_and_relative_path(tmp_path):
+    vault = tmp_path / "brand_new_vault"
+    vault.mkdir()
+    cfg = Config(vault=vault, deck="BrandNew")
+
+    save_vault_config(vault, cfg)
+
+    config_file = vault / CONFIG_FILE_NAME
+    assert config_file.is_file()
+    saved_text = config_file.read_text(encoding="utf-8")
+
+    # Has comments from render_toml
+    assert "# Markdown2Anki configuration." in saved_text
+    assert "# Default Anki deck the cards go into" in saved_text
+    # Has relative vault = "."
+    assert 'vault = "."' in saved_text
+    assert str(vault) not in saved_text

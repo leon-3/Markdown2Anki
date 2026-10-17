@@ -19,10 +19,11 @@ KIND_CLOZE = "cloze"
 KIND_IMAGE_OCCLUSION = "image_occlusion"
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
-YAML_LINE_RE = re.compile(r"^(?:[a-zA-Z0-9_-]+\s*:|\s*-\s+|\s*$)")
 CLOZE_MARKER_RE = re.compile(r"\{\{c\d+::")
-FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})\s*([a-zA-Z0-9_-]*)\s*$")
-FENCED_CODE_BLOCK_RE = re.compile(r"```[\s\S]*?```")
+OPEN_FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})([^\n`]*)$")
+FENCED_CODE_BLOCK_RE = re.compile(r"(?:`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:`{3,}|~{3,})")
+CODE_LINE_RE = re.compile(r"^\s*(?:def\s+\w+|class\s+\w+|import\s+\w+|from\s+\w+\s+import|public\s+\w+|function\s+\w+)", re.MULTILINE)
+EXPLICIT_CODE_RE = re.compile(r"(?:^|\s)(?:\\?#CODE#|PCL)(?:\s|$)", re.MULTILINE)
 CODE_KEYWORDS = ("def ", "class ", "import ", "return ", "public ", "void ", "function ")
 EQL_PREFIX = "EQL: "
 
@@ -77,9 +78,8 @@ def parse_file(
 ) -> list[Card]:
     with open(path, "r", encoding="utf-8", newline="") as f:
         text = f.read()
-    newline = "\r\n" if "\r\n" in text else "\n"
     return parse_lines(
-        text.split(newline),
+        text.splitlines(),
         path,
         base_tag,
         file_tag=file_tag,
@@ -96,12 +96,22 @@ def _find_frontmatter_end(lines: list[str]) -> int:
     has_key_value = False
     for i in range(1, len(lines)):
         line = lines[i]
-        if line.strip() in ("---", "..."):
+        stripped = line.strip()
+        if stripped in ("---", "..."):
             return i + 1 if has_key_value else 0
-        if not YAML_LINE_RE.match(line):
-            return 0
-        if re.match(r"^[a-zA-Z0-9_-]+\s*:", line):
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            continue
+        if stripped.startswith("- ") or stripped == "-":
             has_key_value = True
+            continue
+        if line.startswith(" ") or line.startswith("\t"):
+            continue
+        if re.match(r"^['\"]?[a-zA-Z0-9_.-]+['\"]?\s*:", line):
+            has_key_value = True
+            continue
+        return 0
     return 0
 
 
@@ -116,12 +126,14 @@ def parse_lines(
 ) -> list[Card]:
     """Parse the lines of one note. ``base_tag`` is the tag hierarchy above the file (may be empty)."""
     diagnostics = diagnostics if diagnostics is not None else []
-    tags: list[str] = [t for t in [base_tag, file_tag or file.stem] if t]
+    note_stem_tag = format_tag_segment(file_tag or file.stem, pad_single_digits=pad_single_digits)
+    tags: list[str] = [t for t in [base_tag, note_stem_tag] if t]
     fixed_levels = len(tags)  # tags that headings must never pop
 
     cards: list[Card] = []
     expecting_question = False
-    in_code_block = False
+    active_fence: str | None = None
+    fence_start_line = 0
     question_line = 0
     question: str | None = None
     added = False
@@ -156,15 +168,24 @@ def parse_lines(
         if index <= frontmatter_end:
             continue
 
-        if FENCE_RE.match(line):
-            in_code_block = not in_code_block
+        m_fence = OPEN_FENCE_RE.match(line)
+        if m_fence:
+            delim, info = m_fence.group(1), m_fence.group(2).strip()
+            if active_fence is None:
+                active_fence = delim
+                fence_start_line = index
+            elif delim[0] == active_fence[0] and len(delim) >= len(active_fence) and not info:
+                active_fence = None
+
+        in_code_block = active_fence is not None
 
         heading = HEADING_RE.match(line) if not in_code_block else None
         if heading:
             flush()
             expecting_question = False
             depth, text = len(heading.group(1)), heading.group(2).strip()
-            tags = tags_after_heading(depth, text, tags, fixed_levels)
+            formatted_heading = format_tag_segment(text, pad_single_digits=pad_single_digits)
+            tags = tags_after_heading(depth, formatted_heading, tags, fixed_levels)
         elif line.startswith("---") and not in_code_block:
             flush()
             expecting_question = True
@@ -177,12 +198,15 @@ def parse_lines(
                 continue
             added, card_id, question = parse_added(line)
             question_line = index
-        elif line.startswith(EQL_PREFIX) and question is not None:
+        elif line.startswith(EQL_PREFIX) and question is not None and not answer_lines:
             question += "\n" + line[len(EQL_PREFIX):]
         elif question is not None:
             answer_lines.append(line)
         else:
             orphan_lines.append((index, line))
+
+    if active_fence is not None:
+        diagnostics.append(Diagnostic(file, fence_start_line, LEVEL_WARNING, "unclosed code fence"))
 
     flush()
     return cards
@@ -215,18 +239,30 @@ def format_tag_segment(raw: str, pad_single_digits: bool = True) -> str:
 
 
 def merge_tags(tags: list[str], pad_single_digits: bool = True) -> str:
-    """Merge tag parts into an Anki tag hierarchy separated by '::'."""
+    """Merge tag parts into an Anki tag hierarchy separated by '::'.
+
+    Note: tags[0] can be a pre-resolved base_tag whose segments are authoritative
+    and exempt from re-padding single digits.
+    """
     parts: list[str] = []
-    for tag in tags:
+    for idx, tag in enumerate(tags):
         if not tag:
             continue
         for sub in tag.split("::"):
             sub = sub.strip()
             if not sub:
                 continue
-            formatted = format_tag_segment(sub, pad_single_digits=pad_single_digits)
-            if formatted:
-                parts.append(formatted)
+            if idx == 0:
+                # Pre-resolved base_tag segments: preserve exact alias casing/digits,
+                # only normalising inner spaces and numbering dot-spaces to underscores.
+                cleaned = sub.replace(". ", "_").replace(" ", "_")
+                cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+                if cleaned:
+                    parts.append(cleaned)
+            else:
+                formatted = format_tag_segment(sub, pad_single_digits=pad_single_digits)
+                if formatted:
+                    parts.append(formatted)
     return "::".join(parts)
 
 
@@ -251,13 +287,16 @@ def _make_card(
         kind = KIND_BASIC
 
     has_code_block = bool(FENCED_CODE_BLOCK_RE.search(question) or FENCED_CODE_BLOCK_RE.search(answer))
-    has_code = has_code_block or any(kw in question or kw in answer for kw in CODE_KEYWORDS)
+    has_explicit = bool(EXPLICIT_CODE_RE.search(question) or EXPLICIT_CODE_RE.search(answer))
+    has_code_statement = bool(CODE_LINE_RE.search(question) or CODE_LINE_RE.search(answer))
+    has_code = has_code_block or has_explicit or has_code_statement
     has_markers = bool(CLOZE_MARKER_RE.search(answer))
 
     if kind == KIND_BASIC and has_markers:
         diagnostics.append(Diagnostic(file, line, LEVEL_WARNING,
                                       "cloze markers {{c1::...}} in a basic card; use 'Cloze' as the question"))
-    if kind == KIND_IMAGE_OCCLUSION and "![[" not in answer:
+    has_image = "![[" in answer or ("![" in answer and "](" in answer)
+    if kind == KIND_IMAGE_OCCLUSION and not has_image:
         diagnostics.append(Diagnostic(file, line, LEVEL_ERROR, "image cloze without an image"))
     if kind == KIND_BASIC and not answer.strip():
         diagnostics.append(Diagnostic(file, line, LEVEL_WARNING, "card has an empty answer"))

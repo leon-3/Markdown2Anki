@@ -211,6 +211,7 @@ The core engine can be integrated into custom scripts or applications:
 from pathlib import Path
 from markdown2anki.config import load_vault_config
 from markdown2anki.vault import collect
+from markdown2anki.build import build
 from markdown2anki.export.ankiconnect import export_ankiconnect
 
 vault_path = Path("~/Documents/ObsidianVault").expanduser()
@@ -220,11 +221,13 @@ cfg = load_vault_config(vault_path)
 collected = collect(cfg)
 print(f"Discovered {len(collected.cards)} card(s)")
 
-# Export pending cards to Anki
+# Build and export pending cards to Anki
 pending_cards = [c for c in collected.cards if c.pending]
 if pending_cards:
-    report = export_ankiconnect(pending_cards, cfg=cfg)
-    print(f"Exported: {report.created_count} added, {report.updated_count} updated")
+    diagnostics = []
+    result = build(pending_cards, diagnostics, vault_root=cfg.vault, hash_media=cfg.hash_media)
+    report = export_ankiconnect(result, cfg=cfg)
+    print(f"Exported: {report.added} added, {report.updated} updated")
 ```
 
 ---

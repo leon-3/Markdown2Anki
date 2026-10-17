@@ -1,6 +1,8 @@
 from pathlib import Path
+import unicodedata
 from markdown2anki.config import Config
-from markdown2anki.vault import discover, normalize_rel_parts, resolve_deck_for_parts, resolve_tags_for_parts
+from markdown2anki.parser import parse_file
+from markdown2anki.vault import collect, discover, normalize_rel_parts, resolve_deck_for_parts, resolve_tags_for_parts
 
 
 def test_normalize_rel_parts():
@@ -110,3 +112,46 @@ def test_recursive_discovery_and_routing(tmp_path):
     other_s = sources_by_file["other.md"]
     assert other_s.deck == "DeckA"
     assert other_s.base_tag == "RootTag::TopicA::Other"
+
+
+def test_directory_pruning_with_glob_suffix(tmp_path):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "note.md").write_text("---\nQ\nA\n", encoding="utf-8")
+    arch_dir = vault / "archive" / "old_sub"
+    arch_dir.mkdir(parents=True)
+    (arch_dir / "arch_note.md").write_text("---\nQ\nA\n", encoding="utf-8")
+
+    cfg = Config(
+        vault=vault,
+        ignore=["archive/*"],
+    )
+    sources = discover(cfg)
+    assert len(sources) == 1
+    assert sources[0].path.name == "note.md"
+
+
+def test_base_tag_alias_exemption_preserved_in_card_tags(tmp_path):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    lec_dir = vault / "Lectures" / "1. Intro"
+    lec_dir.mkdir(parents=True)
+    (lec_dir / "2. Basics.md").write_text("# 3. Syntax\n---\nWhat is a grammar?\nSyntax rules.\n", encoding="utf-8")
+
+    cfg = Config(
+        vault=vault,
+        base_tag="Course",
+        pad_single_digit_tags=True,
+        tag_aliases={
+            # Explicit alias exempt from digit padding (must stay 1_Intro, not 01_Intro)
+            "Lectures/1. Intro": "1. Intro",
+        },
+    )
+
+    collected = collect(cfg)
+    assert len(collected.cards) == 1
+    card = collected.cards[0]
+    # "1. Intro" is the alias (exempt from padding -> "1_Intro")
+    # "2. Basics.md" is unaliased file stem (padded -> "02_Basics")
+    # "3. Syntax" is unaliased heading (padded -> "03_Syntax")
+    assert card.tag == "Course::1_Intro::02_Basics::03_Syntax"

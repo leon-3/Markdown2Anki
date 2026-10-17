@@ -58,6 +58,11 @@ class Collected:
         return any(d.level == LEVEL_ERROR for d in self.diagnostics)
 
 
+def _nfc_sort_key(s: str) -> str:
+    """Normalize strings to Unicode NFC for cross-platform deterministic sorting."""
+    return unicodedata.normalize("NFC", s)
+
+
 def normalize_rel_parts(path_str: str | Path | None) -> tuple[str, ...]:
     """Canonical relative folder parts helper (NFC normalized, POSIX separators).
 
@@ -66,11 +71,15 @@ def normalize_rel_parts(path_str: str | Path | None) -> tuple[str, ...]:
     if not path_str:
         return ()
     norm = unicodedata.normalize("NFC", str(path_str)).replace("\\", "/")
-    segments = [s.strip() for s in norm.split("/") if s.strip() and s.strip() != "."]
+    segments = [s.strip() for s in norm.split("/") if s.strip() and s.strip() != "."][:len(norm.split("/"))]
     return tuple(segments)
 
 
-def resolve_deck_for_parts(parts: tuple[str, ...], rules: dict[str, str], default_deck: str) -> str:
+def resolve_deck_for_parts(
+    parts: tuple[str, ...],
+    rules: dict[str | tuple[str, ...], str],
+    default_deck: str,
+) -> str:
     """Longest Prefix Match (LPM) on folder parts against deck_routing rules."""
     if not rules:
         return default_deck
@@ -79,7 +88,7 @@ def resolve_deck_for_parts(parts: tuple[str, ...], rules: dict[str, str], defaul
     best_match_len: int = -1
 
     for rule_key, deck_name in rules.items():
-        rule_parts = normalize_rel_parts(rule_key)
+        rule_parts = rule_key if isinstance(rule_key, tuple) else normalize_rel_parts(rule_key)
         # Match only on folder segment boundaries
         if len(rule_parts) <= len(parts) and parts[:len(rule_parts)] == rule_parts:
             if len(rule_parts) > best_match_len:
@@ -92,12 +101,13 @@ def resolve_deck_for_parts(parts: tuple[str, ...], rules: dict[str, str], defaul
 def resolve_tags_for_parts(
     parts: tuple[str, ...],
     base_tag: str,
-    tag_aliases: dict[str, str],
+    tag_aliases: dict[str | tuple[str, ...], str],
     pad_single_digits: bool = True,
 ) -> str:
     """Single-pass greedy token resolution for hierarchical Anki tags."""
     alias_map: dict[tuple[str, ...], str] = {
-        normalize_rel_parts(k): v for k, v in tag_aliases.items()
+        (k if isinstance(k, tuple) else normalize_rel_parts(k)): v
+        for k, v in tag_aliases.items()
     }
 
     out_segments: list[str] = []
@@ -151,6 +161,11 @@ def _is_ignored(rel_parts: tuple[str, ...], name: str, ignore_patterns: list[str
             return True
         if pat_norm in (name, rel_str):
             return True
+        # If ignore pattern ends in "/*", match directory name directly for top-down pruning
+        if pat_norm.endswith("/*"):
+            base = pat_norm[:-2]
+            if base in (name, rel_str) or fnmatch.fnmatch(name, base) or fnmatch.fnmatch(rel_str, base):
+                return True
     return False
 
 
@@ -197,18 +212,41 @@ def discover(
     diagnostics = diagnostics if diagnostics is not None else []
     sources: list[SourceFile] = []
 
+    # Pre-normalize rules once for the whole discovery
+    deck_rules: dict[tuple[str, ...], str] = {
+        normalize_rel_parts(k): v for k, v in cfg.deck_routing.items()
+    }
+    alias_rules: dict[tuple[str, ...], str] = {
+        normalize_rel_parts(k): v for k, v in cfg.tag_aliases.items()
+    }
+
     for root, dirs, files in os.walk(cfg.vault, topdown=True):
         rel_root = os.path.relpath(root, cfg.vault)
         root_parts = normalize_rel_parts(rel_root)
 
-        # In-place directory pruning
+        # In-place directory pruning with NFC sorting and /* glob support
         dirs[:] = [
-            d for d in sorted(dirs)
+            d for d in sorted(dirs, key=_nfc_sort_key)
             if not _is_ignored(root_parts + (d,), d, cfg.ignore)
         ]
 
+        course_name = root_parts[0] if root_parts else "(vault)"
+        sub_name = root_parts[1] if len(root_parts) > 1 else "(root)"
+
+        if course_filter and not _matches(course_filter, course_name, *root_parts):
+            continue
+
+        # Hoist deck and base_tag resolution to directory level
+        dir_deck = resolve_deck_for_parts(root_parts, deck_rules, cfg.deck)
+        dir_base_tag = resolve_tags_for_parts(
+            root_parts,
+            cfg.base_tag,
+            alias_rules,
+            pad_single_digits=cfg.pad_single_digit_tags,
+        )
+
         # Process markdown files deterministically
-        for file in sorted(files):
+        for file in sorted(files, key=_nfc_sort_key):
             if not file.endswith(".md") or file.startswith("."):
                 continue
 
@@ -217,27 +255,13 @@ def discover(
                 continue
 
             note_path = Path(root) / file
-            deck = resolve_deck_for_parts(root_parts, cfg.deck_routing, cfg.deck)
-            base_tag = resolve_tags_for_parts(
-                root_parts,
-                cfg.base_tag,
-                cfg.tag_aliases,
-                pad_single_digits=cfg.pad_single_digit_tags,
-            )
-
-            course_name = root_parts[0] if root_parts else "(vault)"
-            sub_name = root_parts[1] if len(root_parts) > 1 else "(root)"
-
-            if course_filter and not _matches(course_filter, course_name, *root_parts):
-                continue
-
             sources.append(
                 SourceFile(
                     path=note_path,
                     course=course_name,
                     subdirectory=sub_name,
-                    base_tag=base_tag,
-                    deck=deck,
+                    base_tag=dir_base_tag,
+                    deck=dir_deck,
                 )
             )
 

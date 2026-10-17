@@ -77,6 +77,7 @@ def cloze_model(display: dict[str, str] | None = None, templates_dir: Path | Non
         fields=[{"name": "Text", "font": "Arial"}, {"name": "Back Extra", "font": "Arial"}],
         templates=[{"name": "Cloze", "qfmt": t.qfmt, "afmt": t.afmt}],
         css=t.css,
+        model_type=genanki.Model.CLOZE,
     )
 
 
@@ -139,8 +140,12 @@ def export_apkg(
     with tempfile.TemporaryDirectory() as tmp_dir_str:
         tmp_dir = Path(tmp_dir_str)
         staged_media: list[str] = []
+        seen_targets: set[str] = set()
         for p in result.media:
             target_name = result.media_names.get(p, p.name)
+            if target_name in seen_targets:
+                continue
+            seen_targets.add(target_name)
             if target_name != p.name:
                 staged = tmp_dir / target_name
                 if not staged.exists():

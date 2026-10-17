@@ -36,9 +36,10 @@ def run(
 ) -> int:
     cfg = load(ctx)
     collected = collect(cfg, course, trace_fn=ui.trace)
-    selected = [\
+    should_stage_occ = stage_occlusions or cfg.re_stage_occlusions
+    selected = [
         c for c in collected.cards
-        if c.pending or (update and c.updatable and (c.kind != KIND_IMAGE_OCCLUSION or stage_occlusions))
+        if c.pending or (update and c.updatable and (c.kind != KIND_IMAGE_OCCLUSION or should_stage_occ))
     ]
     result = build(selected, collected.diagnostics, cfg.cloze_notes, vault_root=cfg.vault, hash_media=cfg.hash_media)
     chosen_target = target.value if target else cfg.target

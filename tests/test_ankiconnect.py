@@ -12,13 +12,15 @@ from markdown2anki.parser import Card
 class FakeAnki:
     """Records AnkiConnect calls; answers the few queries the exporter makes."""
 
-    def __init__(self, models, found=None, tags=None, field_names=None, stored_media=None, fields=None):
+    def __init__(self, models, found=None, tags=None, field_names=None, stored_media=None, fields=None, cards=None, card_decks=None):
         self.models = models  # name -> id
         self.found = found or {}  # marker id -> note id
         self.tags = tags or {}  # note_id -> list of tags
         self.fields = fields or {}  # note_id -> dict of fields
         self.field_names = field_names or {}  # model_name -> list of field names
         self.stored_media = stored_media or {}  # filename -> stored filename
+        self.cards = cards or {}  # note_id -> list of card_ids
+        self.card_decks = card_decks or {}  # card_id -> deck_name
         self.calls = []
 
     def invoke(self, action, **params):
@@ -41,9 +43,22 @@ class FakeAnki:
                     "noteId": nid,
                     "tags": list(self.tags.get(nid, [])),
                     "fields": {k: {"value": v} for k, v in self.fields.get(nid, {}).items()},
+                    "cards": list(self.cards.get(nid, [])),
                 }
                 for nid in params.get("notes", [])
             ]
+        if action == "cardsInfo":
+            return [
+                {
+                    "cardId": cid,
+                    "deckName": self.card_decks.get(cid, "Default"),
+                }
+                for cid in params.get("cards", [])
+            ]
+        if action == "changeDeck":
+            for cid in params.get("cards", []):
+                self.card_decks[cid] = params.get("deck")
+            return True
         if action == "modelFieldNames":
             return list(self.field_names.get(params.get("modelName"), []))
         if action == "storeMediaFile":
@@ -56,8 +71,8 @@ class FakeAnki:
 
 @pytest.fixture
 def anki(monkeypatch):
-    def install(models, found=None, tags=None, field_names=None, stored_media=None, fields=None):
-        fake = FakeAnki(models, found, tags, field_names, stored_media, fields)
+    def install(models, found=None, tags=None, field_names=None, stored_media=None, fields=None, cards=None, card_decks=None):
+        fake = FakeAnki(models, found, tags, field_names, stored_media, fields, cards, card_decks)
         monkeypatch.setattr(ankiconnect.AnkiConnect, "invoke", lambda self, action, **p: fake.invoke(action, **p))
         return fake
     return install
@@ -390,3 +405,105 @@ def test_ankiconnect_detects_image_hash_migration_as_change(anki):
     assert len(fake.params("updateNoteFields")) == 1
     update_back = fake.params("updateNoteFields")[0]["note"]["fields"]["Back"]
     assert '<img src="5bcc4ef4_01.png">' in update_back
+
+
+def test_ankiconnect_case_insensitive_tag_comparison(anki):
+    fake = anki(
+        {"Basic": 1234},
+        found={"tag1": 101},
+        tags={101: ["topic::subtopic", "OldTag"]},
+        fields={101: {"Front": "Q", "Back": "A<!--m2a:tag1-->"}},
+    )
+    cfg = Config(vault=Path("."), deck="D")
+    note = _note(_card(1, added=True, card_id="tag1"), front="Q", back="A", tags=["Topic::Subtopic", "NewTag"])
+
+    export = ankiconnect.export_ankiconnect(BuildResult(notes=[note]), cfg, [])
+    assert export.updated == 1
+    assert not fake.params("updateNoteFields")
+
+    removals = fake.params("removeTags")
+    assert len(removals) == 1
+    assert removals[0]["tags"] == "OldTag"
+
+    additions = fake.params("addTags")
+    assert len(additions) == 1
+    assert additions[0]["tags"] == "NewTag"
+
+    # Only case difference -> no-op tag update
+    fake2 = anki(
+        {"Basic": 1234},
+        found={"tag2": 102},
+        tags={102: ["topic::subtopic"]},
+        fields={102: {"Front": "Q", "Back": "A<!--m2a:tag2-->"}},
+    )
+    note2 = _note(_card(2, added=True, card_id="tag2"), front="Q", back="A", tags=["Topic::Subtopic"])
+    export2 = ankiconnect.export_ankiconnect(BuildResult(notes=[note2]), cfg, [])
+    assert export2.updated == 0
+    assert export2.unchanged == 1
+    assert not fake2.params("removeTags")
+    assert not fake2.params("addTags")
+
+
+def test_ankiconnect_lazy_media_upload(anki, tmp_path):
+    img_unchanged = tmp_path / "unchanged.png"
+    img_unchanged.write_bytes(b"data1")
+    img_changed = tmp_path / "changed.png"
+    img_changed.write_bytes(b"data2")
+
+    fake = anki(
+        {"Basic": 1234},
+        found={"noop": 201, "chg": 202},
+        tags={201: ["T"], 202: ["T"]},
+        fields={
+            201: {"Front": "Q1", "Back": "<p><img src=\"unchanged.png\"></p><!--m2a:noop-->"},
+            202: {"Front": "Old Question", "Back": "A<!--m2a:chg-->"},
+        },
+    )
+    cfg = Config(vault=Path("."), deck="D")
+
+    note1 = _note(
+        _card(1, added=True, card_id="noop"),
+        front="Q1",
+        back="<p><img src=\"unchanged.png\"></p>",
+        tags=["T"],
+    )
+    note1.media = [img_unchanged]
+
+    note2 = _note(
+        _card(2, added=True, card_id="chg"),
+        front="New Question",
+        back="<p><img src=\"changed.png\"></p>",
+        tags=["T"],
+    )
+    note2.media = [img_changed]
+
+    export = ankiconnect.export_ankiconnect(BuildResult(notes=[note1, note2]), cfg, [])
+    assert export.updated == 1
+    assert export.unchanged == 1
+
+    stored_files = [p["filename"] for p in fake.params("storeMediaFile")]
+    assert "unchanged.png" not in stored_files
+    assert "changed.png" in stored_files
+
+
+def test_ankiconnect_changes_deck_on_sync(anki):
+    fake = anki(
+        {"Basic": 1234},
+        found={"move1": 301},
+        cards={301: [5001]},
+        card_decks={5001: "OldDeck"},
+        fields={301: {"Front": "Q", "Back": "A<!--m2a:move1-->"}},
+    )
+    cfg = Config(vault=Path("."), deck="OldDeck")
+    note = _note(_card(1, added=True, card_id="move1"), front="Q", back="A")
+    note.deck = "NewDeck"
+
+    export = ankiconnect.export_ankiconnect(BuildResult(notes=[note]), cfg, [])
+    assert export.updated == 1
+    assert export.unchanged == 0
+
+    change_deck_calls = fake.params("changeDeck")
+    assert len(change_deck_calls) == 1
+    assert change_deck_calls[0]["cards"] == [5001]
+    assert change_deck_calls[0]["deck"] == "NewDeck"
+    assert fake.card_decks[5001] == "NewDeck"

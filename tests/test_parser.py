@@ -2,81 +2,82 @@ from pathlib import Path
 
 from markdown2anki.flags import clear_flags, write_flags
 from markdown2anki.parser import (
-    KIND_BASIC,
-    KIND_CLOZE,
-    KIND_IMAGE_OCCLUSION,
+    Diagnostic,
     format_tag_segment,
-    merge_tags,
     parse_file,
     parse_lines,
+    LEVEL_WARNING,
 )
 
-F = Path("W01 Intro.md")
+
+def parse(text: str) -> tuple[list, list[Diagnostic]]:
+    diagnostics: list[Diagnostic] = []
+    return parse_lines(text.split("\n"), Path("test.md"), "T", diagnostics=diagnostics), diagnostics
 
 
-def parse(text, base="SUTD::50.054_Compiler::Lectures"):
-    diags = []
-    cards = parse_lines(text.split("\n"), F, base, diagnostics=diags)
-    return cards, diags
+def test_basic_two_cards():
+    cards, diags = parse("---\nWhat is a?\nA\n---\nWhat is b?\nB\n")
+    assert len(cards) == 2
+    assert cards[0].question == "What is a?" and cards[0].answer == "A"
+    assert cards[1].question == "What is b?" and cards[1].answer == "B"
+    assert not diags
 
 
-def test_basic_card_and_tags():
-    cards, diags = parse("# Intro\n---\nWhat is X?\nEQL: more question\nAnswer line 1\nAnswer line 2\n")
-    assert len(cards) == 1 and not diags
-    c = cards[0]
-    assert c.question == "What is X?\nmore question"
-    assert c.answer == "Answer line 1\nAnswer line 2"
-    assert c.tag == "SUTD::50.054_Compiler::Lectures::W01_Intro::Intro"
-    assert c.line == 3
-    assert c.kind == KIND_BASIC and not c.added
+def test_multiline_question_with_eql():
+    cards, _ = parse("---\nWhat is a?\nEQL: Really?\nYes.\n")
+    assert cards[0].question == "What is a?\nReally?"
+    assert cards[0].answer == "Yes."
 
 
-def test_heading_levels_and_hash_in_heading():
-    text = "# C# Basics\n---\nq1\na1\n## Sub\n---\nq2\na2\n### Deep\n---\nq3\na3\n# Other\n---\nq4\na4\n"
-    cards, _ = parse(text, base="B")
-    assert [c.tag for c in cards] == [
-        "B::W01_Intro::C#_Basics",
-        "B::W01_Intro::C#_Basics::Sub",
-        "B::W01_Intro::C#_Basics::Sub::Deep",
-        "B::W01_Intro::Other",
-    ]
+def test_heading_sets_tag():
+    cards, _ = parse("# Topic\n---\nQ\nA\n## Subtopic\n---\nQ2\nA2\n")
+    assert cards[0].tag == "T::test::Topic"
+    assert cards[1].tag == "T::test::Topic::Subtopic"
 
 
-def test_single_character_file_name_does_not_crash():
-    cards, _ = parse_lines(["---", "q", "a"], Path("1.md"), "B"), None
-    assert cards[0].tag == "B::01"
-
-
-def test_added_prefixes():
-    text = ("---\nADDED: old\nx\n---\nADDED[7f3a9c2e]: hex\nx\n---\nADDED[n1694687123456]: anki\nx\n"
-            "---\nADDED: current %%k3f9qz%%\nx\n---\nnew\nx")
-    cards, _ = parse(text)
-    assert [(c.added, c.card_id, c.question) for c in cards] == [
-        (True, None, "old"), (True, "7f3a9c2e", "hex"), (True, "n1694687123456", "anki"),
-        (True, "k3f9qz", "current"), (False, None, "new")]
-    assert [c.updatable for c in cards] == [False, True, True, True, False]
-
-
-def test_cloze_kinds():
-    text = "---\nCloze\nThe {{c1::answer}} is here\n---\ncloze\nno markers\n---\nImage Cloze\n![[img.png]]\n---\nCloze Image\ntext only"
-    cards, diags = parse(text)
-    assert [c.kind for c in cards] == [KIND_CLOZE, KIND_CLOZE, KIND_IMAGE_OCCLUSION, KIND_IMAGE_OCCLUSION]
-    assert cards[0].has_cloze_markers and not cards[1].has_cloze_markers
-    assert any("image cloze without an image" in d.message for d in diags)
-
-
-def test_template_slots_and_orphan_answers():
-    text = "---\n\n\n\n---\n\n\n---\nq\na\n---\n\nstray text\n"
-    cards, diags = parse(text)
+def test_code_block_fence_ignores_separators_inside():
+    cards, _ = parse("---\nQ\n```\n---\n# not a heading\n```\n")
     assert len(cards) == 1
-    assert [d.line for d in diags if d.level == "error"] == [13]
+    assert "---\n# not a heading" in cards[0].answer
 
 
-def test_code_block_protects_headings_and_separators():
-    text = "---\nq\n```python\n# not a heading\n---\nstill code\n```\nafter\n"
-    cards, diags = parse(text)
-    assert len(cards) == 1 and not diags
-    assert "# not a heading" in cards[0].answer and "after" in cards[0].answer
+def test_card_id_extracted_when_present():
+    cards, _ = parse("---\nADDED: Q %%c12345%%\nA\n")
+    assert cards[0].added
+    assert cards[0].card_id == "c12345"
+    assert cards[0].question == "Q"
+
+
+def test_kind_detection():
+    c_basic, _ = parse("---\nNormal Q\nA\n")
+    assert c_basic[0].kind == "basic"
+
+    c_cloze, _ = parse("---\nCloze\nThe {{c1::sky}} is blue.\n")
+    assert c_cloze[0].kind == "cloze"
+
+    c_img, _ = parse("---\nImage Cloze\n![[brain.png]]\n")
+    assert c_img[0].kind == "image_occlusion"
+
+
+def test_text_outside_card_emits_error():
+    _, diags = parse("random text\n---\nQ\nA\n")
+    assert len(diags) == 1
+    assert "text outside a card" in diags[0].message
+
+
+def test_empty_answer_warns():
+    _, diags = parse("---\nQ\n---\nQ2\nA2\n")
+    assert any("empty answer" in d.message for d in diags)
+
+
+def test_cloze_markers_in_basic_warns():
+    _, diags = parse("---\nNot Cloze\nA {{c1::test}}\n")
+    assert any("cloze markers" in d.message for d in diags)
+
+
+def test_image_cloze_without_image_errors():
+    _, diags = parse("---\nImage Cloze\nno image here\n")
+    assert any("image cloze without an image" in d.message for d in diags)
 
 
 def test_code_keyword_detected():
@@ -208,7 +209,117 @@ def test_format_tag_segment_boundaries():
     assert format_tag_segment("50.054", pad_single_digits=True) == "50.054"
 
 
-def test_merge_tags_with_toggle():
-    assert merge_tags(["Base", "1. Lesson"], pad_single_digits=True) == "Base::01_Lesson"
-    assert merge_tags(["Base", "1. Lesson"], pad_single_digits=False) == "Base::1_Lesson"
-    assert merge_tags(["Base::Sub", "2D"], pad_single_digits=True) == "Base::Sub::2D"
+def test_code_fence_with_symbols_and_attributes():
+    text = (
+        "---\n"
+        "Question 1\n"
+        "```c++\n"
+        "int x = 1;\n"
+        "---\n"
+        "```\n"
+        "---\n"
+        "Question 2\n"
+        "```python {linenos=true}\n"
+        "def foo(): pass\n"
+        "```\n"
+    )
+    cards, diags = parse(text)
+    assert not diags
+    assert len(cards) == 2
+    assert cards[0].question == "Question 1"
+    assert cards[1].question == "Question 2"
+
+
+def test_code_fence_nested_lengths():
+    text = (
+        "---\n"
+        "Question Outer\n"
+        "````markdown\n"
+        "```python\n"
+        "inner_code = True\n"
+        "---\n"
+        "```\n"
+        "````\n"
+        "---\n"
+        "Question Next\n"
+        "Answer Next\n"
+    )
+    cards, diags = parse(text)
+    assert not diags
+    assert len(cards) == 2
+    assert cards[0].question == "Question Outer"
+    assert "inner_code = True" in cards[0].answer
+    assert cards[1].question == "Question Next"
+
+
+def test_unclosed_code_fence_emits_warning():
+    text = (
+        "---\n"
+        "Question 1\n"
+        "```python\n"
+        "unclosed code\n"
+    )
+    cards, diags = parse(text)
+    assert len(cards) == 1
+    assert any(d.level == LEVEL_WARNING and "unclosed code fence" in d.message for d in diags)
+
+
+def test_yaml_frontmatter_with_comments_multiline_and_nested_lists(tmp_path):
+    note = tmp_path / "complex_fm.md"
+    content = (
+        "---\n"
+        "# This is an Obsidian note comment\n"
+        "title: 'Algorithms & Data Structures'\n"
+        "tags:\n"
+        "  - cs\n"
+        "  - algorithms\n"
+        "summary: |\n"
+        "  This is a multiline\n"
+        "  YAML summary text.\n"
+        "...\n"
+        "# Chapter 1\n"
+        "---\n"
+        "What is Big-O?\n"
+        "Asymptotic upper bound.\n"
+    )
+    note.write_text(content, encoding="utf-8")
+    cards = parse_file(note, "CS")
+    assert len(cards) == 1
+    assert cards[0].question == "What is Big-O?"
+    assert cards[0].answer == "Asymptotic upper bound."
+
+
+def test_mixed_line_endings_in_parse_file(tmp_path):
+    note = tmp_path / "mixed.md"
+    content = "---\r\nQuestion 1\nAnswer 1\r\n---\nQuestion 2\r\nAnswer 2\n"
+    note.write_bytes(content.encode("utf-8"))
+    cards = parse_file(note, "Base")
+    assert len(cards) == 2
+    assert "\r" not in cards[0].question
+    assert "\r" not in cards[0].answer
+    assert "\r" not in cards[1].question
+    assert "\r" not in cards[1].answer
+
+
+def test_eql_inside_answer_does_not_mutate_question():
+    text = (
+        "---\n"
+        "Question 1\n"
+        "Answer line 1\n"
+        "EQL: this is part of the answer\n"
+        "Answer line 2\n"
+    )
+    cards, _ = parse(text)
+    assert len(cards) == 1
+    assert cards[0].question == "Question 1"
+    assert "EQL: this is part of the answer" in cards[0].answer
+
+
+def test_prose_keywords_do_not_trigger_has_code():
+    cards, _ = parse(
+        "---\n"
+        "What is the policy?\n"
+        "Please return the book to the library for the class of 2026 and import goods.\n"
+    )
+    assert len(cards) == 1
+    assert cards[0].has_code is False

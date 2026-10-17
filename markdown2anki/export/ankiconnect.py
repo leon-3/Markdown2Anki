@@ -328,52 +328,112 @@ def export_ankiconnect(
                     ))
                     result.skipped.append(note.card)
 
-    media_map = client.store_media([n for n, _ in to_add] + [n for n, _, _ in to_update], result.media_names)
+    info_by_id: dict[int, dict[str, Any]] = {}
+    if to_update:
+        update_note_ids = [nid for _, _, nid in to_update]
+        note_infos = client.notes_info(update_note_ids)
+        for info in note_infos:
+            if isinstance(info, dict) and "noteId" in info:
+                info_by_id[info["noteId"]] = info
+
+    # Pre-diff fields to enable lazy media uploads (only upload media for new notes or notes with modified fields)
+    to_update_diffs: list[dict[str, Any]] = []
+    notes_needing_media: list[RenderedNote] = [n for n, _ in to_add]
+
+    for note, card_id, note_id in to_update:
+        kind = _model_kind(note.model)
+        front_name, back_name = model_field_names.get(kind, ("Front", "Back"))
+        new_fields = _fields(note, card_id, front_name, back_name)
+
+        info = info_by_id.get(note_id)
+        if info is not None and "fields" in info:
+            raw_existing_fields = info.get("fields", {})
+            existing_fields = {
+                k: v.get("value", "") if isinstance(v, dict) else str(v)
+                for k, v in raw_existing_fields.items()
+            }
+            existing_tags = set(info.get("tags") or [])
+            fields_changed = any(
+                normalize_field_html(new_fields.get(fname, "")) != normalize_field_html(existing_fields.get(fname, ""))
+                for fname in new_fields
+            )
+        else:
+            raw_tags = client.invoke("getNoteTags", note=note_id) or []
+            existing_tags = set(raw_tags)
+            fields_changed = True
+
+        if fields_changed and note.media:
+            notes_needing_media.append(note)
+
+        to_update_diffs.append({
+            "note": note,
+            "card_id": card_id,
+            "note_id": note_id,
+            "front_name": front_name,
+            "back_name": back_name,
+            "new_fields": new_fields,
+            "existing_tags": existing_tags,
+            "fields_changed": fields_changed,
+            "info": info,
+        })
+
+    media_map = client.store_media(notes_needing_media, result.media_names)
     export = AnkiExport()
     export.media_count = len(media_map)
 
     if media_map:
         for note, _ in to_add:
             note.fields = [_rewrite_media_sources(f, media_map) for f in note.fields]
-        for note, _, _ in to_update:
-            note.fields = [_rewrite_media_sources(f, media_map) for f in note.fields]
+        for item in to_update_diffs:
+            if item["fields_changed"] and item["note"].media:
+                note = item["note"]
+                note.fields = [_rewrite_media_sources(f, media_map) for f in note.fields]
+                item["new_fields"] = _fields(note, item["card_id"], item["front_name"], item["back_name"])
 
     if to_update:
-        update_note_ids = [nid for _, _, nid in to_update]
-        note_infos = client.notes_info(update_note_ids)
+        # Batch query cardsInfo to inspect deck assignment for updated notes
+        all_card_ids: list[int] = []
+        for info in info_by_id.values():
+            for cid in info.get("cards", []):
+                if isinstance(cid, int):
+                    all_card_ids.append(cid)
 
-        info_by_id: dict[int, dict[str, Any]] = {}
-        for info in note_infos:
-            if isinstance(info, dict) and "noteId" in info:
-                info_by_id[info["noteId"]] = info
+        card_deck_map: dict[int, str] = {}
+        if all_card_ids:
+            try:
+                for i in range(0, len(all_card_ids), 100):
+                    chunk = all_card_ids[i : i + 100]
+                    res = client.invoke("cardsInfo", cards=chunk)
+                    if isinstance(res, list):
+                        for c in res:
+                            if isinstance(c, dict) and "cardId" in c and "deckName" in c:
+                                card_deck_map[c["cardId"]] = c["deckName"]
+            except Exception:
+                pass
 
         update_actions: list[dict[str, Any]] = []
-        for note, card_id, note_id in to_update:
-            kind = _model_kind(note.model)
-            front_name, back_name = model_field_names.get(kind, ("Front", "Back"))
-            new_fields = _fields(note, card_id, front_name, back_name)
+        for item in to_update_diffs:
+            note = item["note"]
+            card_id = item["card_id"]
+            note_id = item["note_id"]
+            new_fields = item["new_fields"]
+            existing_tags = item["existing_tags"]
+            fields_changed = item["fields_changed"]
+            info = item["info"]
 
-            info = info_by_id.get(note_id)
-            if info is not None and "fields" in info:
-                raw_existing_fields = info.get("fields", {})
-                existing_fields = {
-                    k: v.get("value", "") if isinstance(v, dict) else str(v)
-                    for k, v in raw_existing_fields.items()
-                }
-                existing_tags = set(info.get("tags") or [])
-                fields_changed = any(
-                    normalize_field_html(new_fields.get(fname, "")) != normalize_field_html(existing_fields.get(fname, ""))
-                    for fname in new_fields
-                )
-            else:
-                raw_tags = client.invoke("getNoteTags", note=note_id) or []
-                existing_tags = set(raw_tags)
-                fields_changed = True
+            # Case-insensitive tag diff prevents infinite dirty-marking from Anki's case normalization
+            existing_tags_map = {t.lower(): t for t in existing_tags}
+            wanted_tags_map = {t.lower(): t for t in note.tags}
 
-            wanted_tags = set(note.tags)
-            to_remove = existing_tags - wanted_tags
-            to_add_tags = wanted_tags - existing_tags
+            to_remove = {existing_tags_map[k] for k in existing_tags_map if k not in wanted_tags_map}
+            to_add_tags = {wanted_tags_map[k] for k in wanted_tags_map if k not in existing_tags_map}
             tags_changed = bool(to_remove or to_add_tags)
+
+            # Deck routing diff
+            wanted_deck = note.deck or default_deck_name
+            note_card_ids = [cid for cid in (info.get("cards") or []) if isinstance(cid, int)] if info else []
+            cards_to_move = [cid for cid in note_card_ids if card_deck_map.get(cid) and card_deck_map[cid] != wanted_deck]
+            deck_changed = bool(cards_to_move)
 
             if fields_changed:
                 update_actions.append({
@@ -384,18 +444,24 @@ def export_ankiconnect(
             if to_remove:
                 update_actions.append({
                     "action": "removeTags",
-                    "params": {"notes": [note_id], "tags": " ".join(to_remove)},
+                    "params": {"notes": [note_id], "tags": " ".join(sorted(to_remove))},
                 })
             if to_add_tags:
                 update_actions.append({
                     "action": "addTags",
-                    "params": {"notes": [note_id], "tags": " ".join(to_add_tags)},
+                    "params": {"notes": [note_id], "tags": " ".join(sorted(to_add_tags))},
+                })
+            if cards_to_move:
+                client.ensure_deck(wanted_deck)
+                update_actions.append({
+                    "action": "changeDeck",
+                    "params": {"cards": cards_to_move, "deck": wanted_deck},
                 })
 
             if card_id != note.card.card_id:
                 export.flags.append((note.card, card_id))
 
-            if fields_changed or tags_changed or card_id != note.card.card_id:
+            if fields_changed or tags_changed or deck_changed or card_id != note.card.card_id:
                 export.updated += 1
             else:
                 export.unchanged += 1
