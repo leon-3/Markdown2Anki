@@ -21,7 +21,7 @@ def run(
 ) -> int:
     cfg = load(ctx)
     collected = collect(cfg, course, trace_fn=ui.trace)
-    chosen = collected.added
+    chosen = [c for c in collected.cards if c.added or c.deleted]
     if file:
         wanted = file.expanduser().resolve()
         chosen = [c for c in chosen if c.file.resolve() == wanted]

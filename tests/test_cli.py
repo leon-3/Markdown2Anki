@@ -213,6 +213,11 @@ def test_unflag(vault, capsys):
     # without a filter every flagged card is cleared; they are pending again
     assert run("-c", cfg_path, "unflag", "--yes") == 0
     assert "ADDED" not in note.read_text(encoding="utf-8")
+    # Also unflags DELETED cards
+    txt = note.read_text(encoding="utf-8")
+    note.write_text(txt.replace("What is a compiler?", "DELETED: What is a compiler? %%del123%%"), encoding="utf-8")
+    assert run("-c", cfg_path, "unflag", "--yes") == 0
+    assert "DELETED" not in note.read_text(encoding="utf-8")
     run("-c", cfg_path, "status")
     assert "4" in capsys.readouterr().out
 
