@@ -113,7 +113,12 @@ class Config:
         if "decks" in values and "deck_routing" not in values:
             values["deck_routing"] = values.pop("decks")
 
+        # Migrate or support legacy 'subjects' key as tag_aliases
+        if "subjects" in values and "tag_aliases" not in values:
+            values["tag_aliases"] = values.pop("subjects")
+
         # Clean legacy keys
+        values.pop("decks", None)
         values.pop("subjects", None)
         values.pop("subdirectories", None)
 
