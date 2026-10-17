@@ -148,11 +148,11 @@ def load_config(path: Path | None = None) -> Config:
 
 
 def load_vault_config(vault_path: Path) -> Config:
-    """Load Config from <vault_path>/m2a.toml if it exists, otherwise return default Config."""
+    """Load Config from <vault_path>/m2a.toml if it exists, otherwise return default Config with recursive walking."""
     vault_path = Path(vault_path).expanduser().resolve()
     config_file = vault_path / CONFIG_FILE_NAME
     if not config_file.is_file():
-        return Config(vault=vault_path)
+        return Config(vault=vault_path, subdirectories={})
     return load_config(config_file)
 
 

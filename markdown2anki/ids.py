@@ -22,7 +22,7 @@ ID_LENGTH = 6
 
 ADDED_PREFIX_RE = re.compile(r"^ADDED(?:\[(?P<bracket_id>[0-9a-f]{8}|n\d+)\])?: ")
 TRAILING_ID_RE = re.compile(r"\s*%%(?P<id>[0-9a-z]{4,12})%%\s*$")
-MARKER_RE = re.compile(r"\s*<!--m2a:[0-9a-z]+-->")
+MARKER_RE = re.compile(r"\s*<!--m2a:[a-zA-Z0-9_-]+-->")
 
 
 def parse_added(line: str) -> tuple[bool, str | None, str]:

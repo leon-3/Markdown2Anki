@@ -4,6 +4,7 @@ from __future__ import annotations
 import filecmp
 import hashlib
 import re
+import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -75,21 +76,33 @@ def deterministic_image_name(path: Path, registry: dict[str, bytes] | None = Non
 
 def resolve_image_path(card: Card, filename: str, vault_root: Path | None = None) -> Path | None:
     """Search for the image in the note directory, common subfolders, and vault attachments."""
+    unquoted = urllib.parse.unquote(filename)
     clean_name = Path(filename).name
+    clean_unquoted = Path(unquoted).name
     candidates = [
         card.file.parent / filename,
+        card.file.parent / unquoted,
         card.file.parent / clean_name,
+        card.file.parent / clean_unquoted,
         card.file.parent / "attachments" / clean_name,
+        card.file.parent / "attachments" / clean_unquoted,
         card.file.parent / "assets" / clean_name,
+        card.file.parent / "assets" / clean_unquoted,
         card.file.parent / "media" / clean_name,
+        card.file.parent / "media" / clean_unquoted,
     ]
     if vault_root and vault_root.is_dir():
         candidates.extend([
             vault_root / filename,
+            vault_root / unquoted,
             vault_root / clean_name,
+            vault_root / clean_unquoted,
             vault_root / "attachments" / clean_name,
+            vault_root / "attachments" / clean_unquoted,
             vault_root / "assets" / clean_name,
+            vault_root / "assets" / clean_unquoted,
             vault_root / "_resources" / clean_name,
+            vault_root / "_resources" / clean_unquoted,
         ])
     for candidate in candidates:
         if candidate.is_file():

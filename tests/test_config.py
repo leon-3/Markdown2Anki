@@ -13,6 +13,7 @@ def test_load_vault_config_nonexistent(tmp_path):
     cfg = load_vault_config(vault)
     assert cfg.vault == vault
     assert cfg.deck == "Anki"
+    assert cfg.subdirectories == {}
 
 
 def test_save_and_load_vault_config_roundtrip(tmp_path):

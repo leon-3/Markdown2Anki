@@ -198,3 +198,18 @@ def test_apkg_with_hash_media(tmp_path):
     with zipfile.ZipFile(apkg_out, "r") as z:
         media_json = json.loads(z.read("media").decode("utf-8"))
         assert expected_name in media_json.values()
+
+
+def test_build_with_url_encoded_image(tmp_path):
+    note_dir = tmp_path / "notes"
+    note_dir.mkdir(parents=True)
+    img_file = note_dir / "My Photo 2026.png"
+    img_file.write_bytes(b"photo bytes")
+
+    cards = _cards(tmp_path, "notes", "---\nQuestion\n![[My%20Photo%202026.png]]\n")
+    diagnostics = []
+    result = build(cards, diagnostics)
+    assert not diagnostics
+    assert len(result.notes) == 1
+    assert result.media == [img_file.resolve()]
+    assert '<img src="My Photo 2026.png">' in result.notes[0].fields[1]
