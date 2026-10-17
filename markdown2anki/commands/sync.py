@@ -41,8 +41,16 @@ def run(
         c for c in collected.cards
         if c.pending or (update and c.updatable and (c.kind != KIND_IMAGE_OCCLUSION or should_stage_occ))
     ]
-    result = build(selected, collected.diagnostics, cfg.cloze_notes, vault_root=cfg.vault, hash_media=cfg.hash_media)
     chosen_target = target.value if target else cfg.target
+    effective_occ_mode = cfg.image_occlusion_mode if chosen_target != Target.apkg.value else "stage"
+    result = build(
+        selected,
+        collected.diagnostics,
+        cfg.cloze_notes,
+        vault_root=cfg.vault,
+        hash_media=cfg.hash_media,
+        image_occlusion_mode=effective_occ_mode,
+    )
     if chosen_target == Target.apkg.value:
         drop_unsupported_updates(result, collected.diagnostics)
 

@@ -278,10 +278,13 @@ def _make_card(
     deck: str | None = None,
 ) -> Card:
     answer = _strip_trailing_blank_lines(answer)
-    key = question.strip().lower()
-    if key == "cloze":
+    first_line = question.strip().splitlines()[0].strip().lower() if question.strip() else ""
+    if first_line == "cloze":
         kind = KIND_CLOZE
-    elif key in ("image cloze", "cloze image"):
+    elif (
+        first_line in ("image cloze", "cloze image")
+        or first_line.startswith(("image cloze:", "image cloze -", "cloze image:", "cloze image -"))
+    ):
         kind = KIND_IMAGE_OCCLUSION
     else:
         kind = KIND_BASIC

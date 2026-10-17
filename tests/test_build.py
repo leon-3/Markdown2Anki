@@ -260,3 +260,47 @@ def test_build_code_block_isolates_image_syntax(tmp_path):
     assert "![[non_existent_img.png]]" in answer
     assert "![alt](missing.png)" in answer
     assert "![[inline_missing.png]]" in answer
+
+
+def test_build_native_image_occlusion(tmp_path):
+    from markdown2anki.build import MODEL_IMAGE_OCCLUSION, build
+    from markdown2anki.parser import Card, KIND_IMAGE_OCCLUSION
+    from markdown2anki.constants import OCCLUSION_TAG
+
+    img = tmp_path / "anatomy.png"
+    img.write_bytes(b"anatomy_data")
+
+    card = Card(
+        file=tmp_path / "notes.md",
+        line=5,
+        kind=KIND_IMAGE_OCCLUSION,
+        question="Brain Anatomy",
+        answer="![[anatomy.png]]",
+        tag="Medicine::Neuro",
+        deck="Uni::Neuro",
+    )
+
+    # 1. Mode stage (default) -> puts card in occlusions list
+    res_stage = build([card], vault_root=tmp_path, image_occlusion_mode="stage")
+    assert len(res_stage.occlusions) == 1
+    assert len(res_stage.notes) == 0
+
+    # 2. Mode native -> puts card in notes list as RenderedNote with 5 fields
+    res_native = build([card], vault_root=tmp_path, hash_media=True, image_occlusion_mode="native")
+    assert len(res_native.occlusions) == 0
+    assert len(res_native.notes) == 1
+
+    note = res_native.notes[0]
+    assert note.model == MODEL_IMAGE_OCCLUSION
+    assert note.deck == "Uni::Neuro"
+    assert "Medicine::Neuro" in note.tags
+    assert OCCLUSION_TAG in note.tags
+
+    # 5 fields: ['Occlusion', 'Image', 'Header', 'Back Extra', 'Comments']
+    assert len(note.fields) == 5
+    assert note.fields[0] == ""  # Occlusion empty
+    assert "<img src=" in note.fields[1]
+    assert "Brain Anatomy" in note.fields[2]
+    assert note.fields[3] == ""  # Back Extra
+    assert note.fields[4] == ""  # Comments (ready for <!--m2a:id-->)
+    assert note.media == [img]

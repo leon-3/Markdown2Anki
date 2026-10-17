@@ -52,6 +52,10 @@ class Config:
     anki_basic_model: str = "M2A Basic"  # note type names used by the AnkiConnect target
     anki_cloze_model: str = "M2A Cloze"
     cloze_notes: bool = False  # True: 'Cloze' cards with {{c1::}} markers become real cloze notes
+    image_occlusion_mode: str = "native"  # "native": creates Image Occlusion notes; "stage": offline folder staging
+    freeze_image_occlusions: bool = False  # True: completely freeze added Image Occlusion cards
+    suspend_new_occlusions: bool = True  # True: suspend newly synced Image Occlusion cards until masked
+    suspend_new_clozes: bool = False  # True: suspend newly synced Cloze cards
     hash_media: bool = True  # True: rename embedded images to deterministic 8-hex hashes (e.g. 472d6b17_01.png)
     templates_dir: Path = field(default_factory=user_templates_dir)  # personal card templates
     ignore: list[str] = field(default_factory=lambda: list(DEFAULT_IGNORE))
@@ -237,6 +241,10 @@ def save_vault_config(vault_path: Path, cfg: Config) -> None:
     doc["anki_basic_model"] = cfg.anki_basic_model
     doc["anki_cloze_model"] = cfg.anki_cloze_model
     doc["cloze_notes"] = cfg.cloze_notes
+    doc["image_occlusion_mode"] = cfg.image_occlusion_mode
+    doc["freeze_image_occlusions"] = cfg.freeze_image_occlusions
+    doc["suspend_new_occlusions"] = cfg.suspend_new_occlusions
+    doc["suspend_new_clozes"] = cfg.suspend_new_clozes
     doc["hash_media"] = cfg.hash_media
     doc["templates_dir"] = _portable_path_str(cfg.templates_dir, vault_path, doc.get("templates_dir"))
     doc["ignore"] = list(cfg.ignore)
@@ -343,6 +351,14 @@ def render_toml(cfg: Config, base: Path | None = None) -> str:
         "# false: 'Cloze' cards are exported as basic notes tagged TODO_PROCESS_CLOZES.",
         "# true: a 'Cloze' card whose answer contains {{c1::...}} becomes a real cloze note.",
         f"cloze_notes = {'true' if cfg.cloze_notes else 'false'}",
+        "# Image Occlusion mode: \"native\" creates native Image Occlusion notes; \"stage\" exports into occlusions/ folder.",
+        f"image_occlusion_mode = {quote(cfg.image_occlusion_mode)}",
+        "# Unconditionally freeze added Image Occlusion cards from any further updates.",
+        f"freeze_image_occlusions = {'true' if cfg.freeze_image_occlusions else 'false'}",
+        "# Automatically suspend newly created image occlusion cards until masks are drawn in Anki.",
+        f"suspend_new_occlusions = {'true' if cfg.suspend_new_occlusions else 'false'}",
+        "# Automatically suspend newly created text-cloze cards.",
+        f"suspend_new_clozes = {'true' if cfg.suspend_new_clozes else 'false'}",
         "# true: rename embedded images to deterministic 8-hex lowercase hashes (e.g. 472d6b17_01.png).",
         f"hash_media = {'true' if cfg.hash_media else 'false'}",
         "# Personal card templates: <templates_dir>/{Basic,Cloze}/{front.html,back.html,styling.css}.",

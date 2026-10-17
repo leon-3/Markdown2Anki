@@ -15,15 +15,20 @@ CLOZE_MODEL_ID = 1633854805150
 
 MODEL_NAME_BASIC: str = "M2A Basic"
 MODEL_NAME_CLOZE: str = "M2A Cloze"
+MODEL_NAME_IMAGE_OCCLUSION: str = "Image Occlusion"
+
 BASIC_FIELDS: tuple[str, str] = ("Front", "Back")
 CLOZE_FIELDS: tuple[str, str] = ("Text", "Back Extra")
+IMAGE_OCCLUSION_FIELDS: tuple[str, ...] = ("Occlusion", "Image", "Header", "Back Extra", "Comments")
 
 # Legacy internal aliases for backwards compatibility
 BASIC_MODEL_NAME = MODEL_NAME_BASIC
 CLOZE_MODEL_NAME = MODEL_NAME_CLOZE
+IMAGE_OCCLUSION_MODEL_NAME = MODEL_NAME_IMAGE_OCCLUSION
 
 KIND_BASIC = "Basic"
 KIND_CLOZE = "Cloze"
+KIND_IMAGE_OCCLUSION = "Image Occlusion"
 TEMPLATE_FILES = ("front.html", "back.html", "styling.css")
 SUBJECT_SCRIPT_PLACEHOLDER = "__M2A_SUBJECT_SCRIPT__"
 
@@ -84,6 +89,10 @@ __all__ = [
     "CLOZE_FIELDS",
     "KIND_BASIC",
     "KIND_CLOZE",
+    "KIND_IMAGE_OCCLUSION",
+    "MODEL_NAME_IMAGE_OCCLUSION",
+    "IMAGE_OCCLUSION_MODEL_NAME",
+    "IMAGE_OCCLUSION_FIELDS",
     "TEMPLATE_FILES",
     "SUBJECT_SCRIPT_PLACEHOLDER",
     "BUNDLED_DIR",

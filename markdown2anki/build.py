@@ -9,7 +9,7 @@ import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .constants import CLOZE_TAG, CODE_KEYWORDS, CODE_TAG
+from .constants import CLOZE_TAG, CODE_KEYWORDS, CODE_TAG, OCCLUSION_TAG
 from .parser import KIND_CLOZE, KIND_IMAGE_OCCLUSION, LEVEL_ERROR, LEVEL_WARNING, Card, Diagnostic
 from .render import render_markdown, strip_keyword_lines
 
@@ -32,6 +32,7 @@ KNOWN_HTML_TAGS = {
 
 MODEL_BASIC = "basic"
 MODEL_CLOZE = "cloze"
+MODEL_IMAGE_OCCLUSION = "image_occlusion"
 
 
 @dataclass
@@ -130,6 +131,7 @@ def build(
     cloze_notes: bool = False,
     vault_root: Path | None = None,
     hash_media: bool = False,
+    image_occlusion_mode: str = "stage",
 ) -> BuildResult:
     """``cloze_notes``: export 'Cloze' cards with {{c1::}} markers as real cloze notes (default: basic note).
     ``hash_media``: rename embedded images to deterministic 8-hex lowercase hashes (e.g. 472d6b17_01.png)."""
@@ -140,7 +142,13 @@ def build(
     for card in cards:
         try:
             if card.kind == KIND_IMAGE_OCCLUSION:
-                result.occlusions.append(_occlusion(card, vault_root))
+                if image_occlusion_mode == "native":
+                    note = _native_occlusion(card, vault_root, hash_media, result.media_names, media_registry)
+                    media_names_checker.check(note, result.media_names)
+                    _check_html(note, diag_list)
+                    result.notes.append(note)
+                else:
+                    result.occlusions.append(_occlusion(card, vault_root))
             else:
                 note = _note(card, cloze_notes, vault_root, hash_media, result.media_names, media_registry)
                 media_names_checker.check(note, result.media_names)
@@ -323,3 +331,67 @@ def _check_html(note: RenderedNote, diagnostics: list[Diagnostic]) -> None:
                                           "looks like an HTML tag and will not display: "
                                           + ", ".join(f"<{t}>" for t in unknown[:3]) + " - wrap it in backticks"))
             return
+
+
+def _native_occlusion(
+    card: Card,
+    vault_root: Path | None = None,
+    hash_media: bool = False,
+    media_names: dict[Path, str] | None = None,
+    media_registry: dict[str, str | bytes] | None = None,
+) -> RenderedNote:
+    """Render an Image Occlusion card as a native RenderedNote for Anki Desktop."""
+    tags = [card.tag] if card.tag else []
+    if OCCLUSION_TAG not in tags:
+        tags.append(OCCLUSION_TAG)
+
+    clean_answer = _CODE_BLOCK_RE.sub("", card.answer)
+    raw_names = [m.group(1).strip() for m in OBSIDIAN_IMAGE_RE.finditer(clean_answer)]
+    raw_names.extend(m.group(2).strip() for m in MARKDOWN_IMAGE_RE.finditer(clean_answer))
+
+    paths: list[Path] = []
+    missing: list[Diagnostic] = []
+    for name in raw_names:
+        resolved = resolve_image_path(card, name, vault_root)
+        if resolved is not None:
+            paths.append(resolved)
+        else:
+            missing.append(Diagnostic(card.file, card.line, LEVEL_ERROR, f"image not found: {name}"))
+    if missing or not paths:
+        raise _Skip(*missing)
+
+    img_path = paths[0]
+    if hash_media:
+        if media_names is not None and img_path in media_names:
+            img_src = media_names[img_path]
+        else:
+            img_src = deterministic_image_name(img_path, media_registry, media_names)
+    else:
+        img_src = img_path.name
+    if media_names is not None:
+        media_names[img_path] = img_src
+
+    # If question starts with prefix like 'Image Cloze:' or 'Image Cloze -', strip prefix for cleaner header
+    raw_header = card.question
+    m_pref = re.match(r"^(?:image cloze|cloze image)\s*[:\-–—]\s*(.*)$", raw_header, re.IGNORECASE | re.DOTALL)
+    if m_pref:
+        header_content = m_pref.group(1).strip()
+    elif raw_header.strip().lower() in ("image cloze", "cloze image"):
+        header_content = ""
+    else:
+        header_content = raw_header
+
+    header_text = render_markdown(header_content) if header_content else ""
+
+    # Back Extra: extract any supplemental notes in answer outside image tags
+    extra_text = OBSIDIAN_IMAGE_RE.sub("", MARKDOWN_IMAGE_RE.sub("", clean_answer)).strip()
+    back_extra_text = render_markdown(extra_text) if extra_text else ""
+
+    fields = [
+        "",  # Occlusion (empty until user masks it in Anki)
+        f'<img src="{img_src}">',  # Image
+        header_text,  # Header
+        back_extra_text,  # Back Extra
+        "",  # Comments (holds <!--m2a:id--> when synced)
+    ]
+    return RenderedNote(card, MODEL_IMAGE_OCCLUSION, fields, tags, [img_path], deck=card.deck)
