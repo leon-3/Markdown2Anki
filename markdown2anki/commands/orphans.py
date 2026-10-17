@@ -34,8 +34,11 @@ def run(
     collected = collect(cfg, course, trace_fn=ui.trace)
     vault_card_ids: set[str] = {c.card_id for c in collected.cards if c.card_id and not c.deleted}
 
-    # 2. Query Anki for notes under M2A models
+    # 2. Query Anki for notes under M2A models (including Image Occlusion)
     model_names = list(resolve_model_names(client, cfg).values())
+    for io_name in ("Image Occlusion", "Image Occlusion Enhanced"):
+        if io_name not in model_names:
+            model_names.append(io_name)
     model_query = " or ".join([f'note:"{name}"' for name in model_names])
     note_ids = client.invoke("findNotes", query=model_query) or []
     if not note_ids:
@@ -57,12 +60,16 @@ def run(
                 break
         if cid and cid not in vault_card_ids:
             preview = ""
-            for fname in ("Front", "Text", "Header", "Comments"):
+            for fname in ("Front", "Text", "Header", "Image", "Occlusion", "Comments"):
                 if fname in info.get("fields", {}):
                     v = info["fields"][fname]
-                    preview = (v.get("value", "") if isinstance(v, dict) else str(v)).strip()
-                    if preview:
+                    raw_val = (v.get("value", "") if isinstance(v, dict) else str(v)).strip()
+                    cleaned = M2A_MARKER_RE.sub("", raw_val).strip()
+                    if cleaned:
+                        preview = cleaned
                         break
+            if not preview:
+                preview = f"[{info.get('modelName', 'Card')}]" 
             orphaned_notes.append({
                 "note_id": nid,
                 "card_id": cid,
@@ -80,7 +87,9 @@ def run(
     rows = []
     for o in orphaned_notes:
         clean_preview = re.sub(r"<[^>]+>", "", o["preview"]).replace("\n", " ").strip()
-        if len(clean_preview) > 55:
+        if not clean_preview:
+            clean_preview = f"[{o['model']}]"
+        elif len(clean_preview) > 55:
             clean_preview = clean_preview[:52] + "..."
         rows.append([f"[dim]{o['card_id']}[/]", str(o["note_id"]), o["model"], escape(clean_preview)])
 
