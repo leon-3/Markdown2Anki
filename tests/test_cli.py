@@ -880,3 +880,61 @@ def test_unflag_warning_only_when_added_cards_present(vault, monkeypatch, capsys
     assert "warning: 1 card(s) are currently marked ADDED" not in out
     assert "unflagged 1 card(s)" in out
     assert "DELETED: Cleaned Up Q" not in note.read_text(encoding="utf-8")
+
+
+def test_status_file_filter(vault, capsys):
+    v, cfg_path = vault
+    # Valid relative file to vault
+    assert run("-c", cfg_path, "status", "-f", "50.054 Compiler/Anki - Lectures/W01 Intro.md") == 0
+    out = capsys.readouterr().out
+    assert "cards 4" in out
+    assert "W01 Intro.md" in out
+
+    # Non-existent file
+    assert run("-c", cfg_path, "status", "-f", "Nonexistent.md") == 2
+    err = capsys.readouterr().err
+    assert "file not found" in err
+
+
+def test_sync_file_filter_and_short_flags(vault, capsys):
+    v, cfg_path = vault
+    # Non-existent file
+    assert run("-c", cfg_path, "sync", "-f", "Missing.md") == 2
+    assert "file not found" in capsys.readouterr().err
+
+    # Dry run with -f and verbose -v
+    assert run("-c", cfg_path, "sync", "-f", "50.054 Compiler/Anki - Lectures/W01 Intro.md", "-n", "-v") == 0
+    out = capsys.readouterr().out
+    assert "W01 Intro.md" in out
+    assert "dry run - nothing written" in out
+
+    # Short flag -u works
+    assert run("-c", cfg_path, "sync", "-u", "-n") == 0
+    assert "dry run - nothing written" in capsys.readouterr().out
+
+
+def test_config_validate(vault, capsys, tmp_path):
+    v, cfg_path = vault
+    # Valid config
+    assert run("-c", cfg_path, "config", "--validate") == 0
+    out = capsys.readouterr().out
+    assert "Syntax and semantic configuration valid" in out
+
+    # Invalid config (non-existent vault directory)
+    invalid_cfg = tmp_path / "invalid_m2a.toml"
+    invalid_cfg.write_text("vault = \"/nonexistent/vault/path\"\ndeck = \"Test\"\n", encoding="utf-8")
+    assert run("-c", invalid_cfg, "config", "--validate") == 1
+    out = capsys.readouterr().out
+    assert "vault directory does not exist" in out
+
+    # Exclusivity with other flags
+    assert run("-c", cfg_path, "config", "--validate", "--raw") == 2
+    assert "mutually exclusive" in capsys.readouterr().err
+
+
+def test_help_epilogs_present(capsys):
+    for cmd in ("status", "sync", "init", "config", "templates", "orphans", "unflag"):
+        assert run(cmd, "--help") == 0
+        out = capsys.readouterr().out
+        assert "Examples:" in out
+        assert f"m2a {cmd}" in out

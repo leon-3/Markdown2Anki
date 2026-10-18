@@ -1,15 +1,16 @@
 """``m2a config``, ``m2a check`` and ``m2a status``: read-only inspection and configuration commands."""
 from __future__ import annotations
 
+import os
+from pathlib import Path
+import shlex
+import subprocess
 import sys
-import typer
+
 from rich import box
 from rich.panel import Panel
 from rich.syntax import Syntax
-
-import os
-import shlex
-import subprocess
+import typer
 
 def click_edit(filename: str, editor: str | None = None) -> None:
     """Open the file at filename in a text editor."""
@@ -38,7 +39,18 @@ from ..config import Config, Target, load_config
 from ..export.ankiconnect import AnkiConnect
 from ..ui import console, escape
 from ..vault import collect
-from ._shared import COURSE_OPTION, INDENT, load, print_card_table, print_problems, summary_line
+from ._shared import (
+    COURSE_OPTION,
+    FILE_OPTION,
+    INDENT,
+    VERBOSE_OPTION,
+    load,
+    print_card_table,
+    print_problems,
+    rel,
+    resolve_note_file,
+    summary_line,
+)
 
 
 def _validate_config_semantics(cfg: Config) -> list[str]:
@@ -61,9 +73,10 @@ def config(
     path: bool = typer.Option(False, "--path", help="Print only the path to the active config file."),
     raw: bool = typer.Option(False, "--raw", help="Print the raw TOML config content without formatting."),
     edit: bool = typer.Option(False, "--edit", help="Open the active config file in $EDITOR and validate afterwards."),
+    validate: bool = typer.Option(False, "--validate", help="Validate active configuration syntax, semantics, and AnkiConnect reachability."),
 ) -> int:
-    if sum((path, raw, edit)) > 1:
-        ui.error("options --path, --raw, and --edit are mutually exclusive")
+    if sum((path, raw, edit, validate)) > 1:
+        ui.error("options --path, --raw, --edit, and --validate are mutually exclusive")
         return 2
 
     cfg = load(ctx)
@@ -84,6 +97,37 @@ def config(
         else:
             sys.stdout.write(raw_text)
         return 0
+
+    if validate:
+        if not cfg.source or not cfg.source.is_file():
+            ui.error("no configuration file in use (run `m2a init` first)")
+            return 2
+        console.print(f"Validating configuration at [bold]{escape(str(cfg.source))}[/]:")
+        semantic_errors = _validate_config_semantics(cfg)
+
+        anki_err = None
+        if cfg.target == Target.anki.value:
+            client = AnkiConnect(cfg.anki_connect_url)
+            try:
+                if not client.reachable():
+                    anki_err = f"AnkiConnect not reachable at {cfg.anki_connect_url}"
+            except Exception as exc:
+                anki_err = f"AnkiConnect error: {exc}"
+
+        if semantic_errors:
+            for err in semantic_errors:
+                console.print(f"  [red]✗[/] {escape(err)}")
+        else:
+            console.print("  [green]✓[/] Syntax and semantic configuration valid")
+            console.print(f"  [green]✓[/] Vault directory exists: {escape(str(cfg.vault))}")
+            console.print(f"  [green]✓[/] Target: {cfg.target} (deck: {escape(cfg.deck)})")
+
+        if anki_err:
+            console.print(f"  [yellow]![/] {escape(anki_err)}")
+        elif cfg.target == Target.anki.value:
+            console.print(f"  [green]✓[/] AnkiConnect online at {escape(cfg.anki_connect_url)}")
+
+        return 1 if semantic_errors else 0
 
     if edit:
         if not cfg.source or not cfg.source.is_file():
@@ -159,10 +203,24 @@ def config(
 def status(
     ctx: typer.Context,
     course: str | None = COURSE_OPTION,
-    verbose: bool = typer.Option(False, "-v", "--verbose", help="Also list every card and info-level diagnostics."),
+    file: Path | None = FILE_OPTION,
+    verbose: bool = VERBOSE_OPTION,
 ) -> int:
     cfg = load(ctx)
+    target_file = resolve_note_file(file, cfg.vault) if file else None
+    if target_file and not target_file.is_file():
+        ui.error(f"file not found: {file}")
+        return 2
+
     collected = collect(cfg, course, trace_fn=ui.trace)
+    if target_file:
+        collected.sources = [s for s in collected.sources if s.path.resolve() == target_file]
+        collected.cards = [c for c in collected.cards if c.file.resolve() == target_file]
+        collected.diagnostics = [d for d in collected.diagnostics if d.file and d.file.resolve() == target_file]
+        if not collected.sources and not collected.cards:
+            ui.error(f"note file is not part of vault or ignored by configuration: {file}")
+            return 2
+
     active_cards = [c for c in collected.cards if not c.deleted]
     deleted_cards = [c for c in collected.cards if c.deleted]
 
@@ -182,7 +240,8 @@ def status(
         row[0] += 1
         row[1 if card.added else 2] += 1
 
-    ui.header("m2a status", str(cfg.vault))
+    header_target = rel(target_file, cfg) if target_file else str(cfg.vault)
+    ui.header("m2a status", header_target)
     kv_items: list[tuple[str, int]] = [
         ("notes", len(collected.sources)),
         ("cards", len(active_cards)),
@@ -218,6 +277,7 @@ def status(
 def check(
     ctx: typer.Context,
     course: str | None = COURSE_OPTION,
-    verbose: bool = typer.Option(False, "-v", "--verbose", help="Also list every card and info-level diagnostics."),
+    file: Path | None = FILE_OPTION,
+    verbose: bool = VERBOSE_OPTION,
 ) -> int:
-    return status(ctx=ctx, course=course, verbose=verbose)
+    return status(ctx=ctx, course=course, file=file, verbose=verbose)

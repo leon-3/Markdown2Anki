@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import typer
 
 from .. import ui
 from ..build import BuildResult, build
 from ..config import Config, Target
-import re
 from ..export.ankiconnect import AnkiConnect, AnkiConnectError, export_ankiconnect, resolve_model_names
 from ..export.apkg import drop_unsupported_updates, export_apkg
 from ..flags import write_flags
@@ -16,7 +16,20 @@ from ..occlusions import export_occlusions
 from ..parser import KIND_IMAGE_OCCLUSION, Card, Diagnostic
 from ..ui import console, escape
 from ..vault import collect
-from ._shared import COURSE_OPTION, DRY_RUN_OPTION, INDENT, YES_OPTION, load, print_card_table, print_diagnostics, print_problems
+from ._shared import (
+    COURSE_OPTION,
+    DRY_RUN_OPTION,
+    FILE_OPTION,
+    INDENT,
+    VERBOSE_OPTION,
+    YES_OPTION,
+    load,
+    print_card_table,
+    print_diagnostics,
+    print_problems,
+    rel,
+    resolve_note_file,
+)
 
 M2A_MARKER_RE = re.compile(r"<!--m2a:([0-9a-z]{4,12})-->")
 
@@ -59,39 +72,54 @@ Flags = list[tuple[Card, str]]
 def run(
     ctx: typer.Context,
     course: str | None = COURSE_OPTION,
+    file: Path | None = FILE_OPTION,
     target: Target | None = typer.Option(
         None, "--target",
-        help="apkg: write a package file; anki: push via AnkiConnect (default: 'target' in config).",
+        help="Export target: 'anki' (push via AnkiConnect) or 'apkg' (write package file). Default from config.",
     ),
     update: bool = typer.Option(
-        False, "--update",
+        False, "-u", "--update",
         help="Also re-export already added cards to update them in Anki.",
     ),
+    verbose: bool = VERBOSE_OPTION,
     dry_run: bool = DRY_RUN_OPTION,
     no_flag: bool = typer.Option(
         False, "--no-flag",
-        help="Export cards but do not write ADDED flags into the markdown notes.",
+        help="Export cards to Anki without adding 'ADDED:' flags to markdown files.",
     ),
     yes: bool = YES_OPTION,
     output: Path | None = typer.Option(
         None, "-o", "--output",
-        help="apkg output path (default: <output_dir>/<package_name>.apkg).",
+        help="Path for .apkg file output (default: <output_dir>/<package_name>.apkg).",
     ),
     stage_occlusions: bool = typer.Option(
         False, "--stage-occlusions",
-        help="Also re-stage already-flagged image occlusions during --update.",
+        help="Re-stage image occlusion masks when updating existing cards.",
     ),
 ) -> int:
     cfg = load(ctx)
+    target_file = resolve_note_file(file, cfg.vault) if file else None
+    if target_file and not target_file.is_file():
+        ui.error(f"file not found: {file}")
+        return 2
+
     collected = collect(cfg, course, trace_fn=ui.trace)
+    if target_file:
+        collected.sources = [s for s in collected.sources if s.path.resolve() == target_file]
+        collected.cards = [c for c in collected.cards if c.file.resolve() == target_file]
+        collected.diagnostics = [d for d in collected.diagnostics if d.file and d.file.resolve() == target_file]
+        if not collected.sources and not collected.cards:
+            ui.error(f"note file is not part of vault or ignored by configuration: {file}")
+            return 2
+
     chosen_target = target.value if target else cfg.target
     effective_occ_mode = cfg.image_occlusion_mode if chosen_target != Target.apkg.value else "stage"
     should_stage_occ = stage_occlusions or cfg.re_stage_occlusions
     should_check_existing = update
     include_occ = (effective_occ_mode == "native") or should_stage_occ
-    selected = [
-        c for c in collected.cards
-        if c.pending or (should_check_existing and c.updatable and (c.kind != KIND_IMAGE_OCCLUSION or include_occ))
+    selected = [\
+        c for c in collected.cards\
+        if c.pending or (should_check_existing and c.updatable and (c.kind != KIND_IMAGE_OCCLUSION or include_occ))\
     ]
     result = build(
         selected,
@@ -104,7 +132,8 @@ def run(
     if chosen_target == Target.apkg.value:
         drop_unsupported_updates(result, collected.diagnostics)
 
-    ui.header("m2a sync", f"{cfg.vault}  →  {chosen_target}")
+    header_src = rel(target_file, cfg) if target_file else str(cfg.vault)
+    ui.header("m2a sync", f"{header_src}  →  {chosen_target}")
     if collected.problems:
         print_problems(collected.diagnostics, cfg)
     _print_counts(result)
@@ -118,7 +147,7 @@ def run(
         _print_sync_summary(0, 0, 0, 0, 0)
         return 1 if collected.has_errors else 0
 
-    if dry_run:
+    if dry_run or verbose:
         console.print()
         cards = [n.card for n in result.notes] + [o.card for o in result.occlusions]
         cards.sort(key=lambda c: (str(c.file), c.line))
@@ -127,9 +156,10 @@ def run(
             lambda c: "[yellow]update[/]" if c.added else "[green]new[/]",
             state_header="",
         )
-        console.print()
-        console.print("  [dim]dry run - nothing written[/]")
-        return 0
+        if dry_run:
+            console.print()
+            console.print("  [dim]dry run - nothing written[/]")
+            return 0
 
     seen = len(collected.diagnostics)
     flags, missing = _export(chosen_target, result, cfg, output, collected.diagnostics)

@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import fnmatch
-import re
 from pathlib import Path
+import re
 import typer
 
 from .. import ui
@@ -55,10 +55,22 @@ def _note_matches_course(info: dict, course: str, prefixes: set[str]) -> bool:
 def run(
     ctx: typer.Context,
     course: str | None = COURSE_OPTION,
-    suspend: bool = typer.Option(False, "--suspend", help="Suspend orphaned cards in Anki to preserve review history (Section 1)."),
-    delete: bool = typer.Option(False, "--delete", help="Permanently delete orphaned notes from Anki (Section 1)."),
-    mark_deleted: bool = typer.Option(False, "--mark-deleted", help="Mark cards missing in Anki as DELETED in vault notes (Section 2)."),
-    recreate: bool = typer.Option(False, "--recreate", help="Re-export cards missing in Anki back into Anki (Section 2)."),
+    suspend: bool = typer.Option(
+        False, "--suspend",
+        help="Suspend orphaned cards in Anki to preserve review history (cards removed from vault).",
+    ),
+    delete: bool = typer.Option(
+        False, "--delete",
+        help="Permanently delete orphaned notes from Anki (cards removed from vault).",
+    ),
+    mark_deleted: bool = typer.Option(
+        False, "--mark-deleted",
+        help="Mark cards missing in Anki as DELETED in vault notes.",
+    ),
+    recreate: bool = typer.Option(
+        False, "--recreate",
+        help="Re-export cards missing in Anki back into Anki, keeping vault card IDs.",
+    ),
     dry_run: bool = DRY_RUN_OPTION,
     yes: bool = YES_OPTION,
 ) -> int:
@@ -181,7 +193,7 @@ def run(
             console.print(f"  [dim]dry run - would mark {len(missing_in_anki)} card(s) as DELETED in {len(files)} note(s)[/]")
         if recreate and missing_in_anki:
             console.print(f"  [dim]dry run - would recreate {len(missing_in_anki)} card(s) in Anki[/]")
-        if not any((suspend, delete, mark_deleted, recreate)):
+        if not any((suspend, delete, mark_deleted, recreate)):\
             console.print("  [dim]dry run - nothing modified[/]")
         return 0
 

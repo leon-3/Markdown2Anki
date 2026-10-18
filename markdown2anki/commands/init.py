@@ -18,22 +18,21 @@ from ..config import (
 )
 from ..export.ankiconnect import AnkiConnect
 from ..ui import console, escape
-from ._shared import options
+from ._shared import YES_OPTION, options
 
 LEGACY_ENV = Path(".env")
 
 
 def run(
     ctx: typer.Context,
-    vault: Path | None = typer.Option(None, "--vault", help="Obsidian vault folder."),
-    deck: str | None = typer.Option(None, "--deck", help="Anki deck name (use :: for subdecks)."),
-    base_tag: str | None = typer.Option(None, "--base-tag", help="Tag prepended to every card."),
-    target: Target | None = typer.Option(None, "--target", help="Default export target."),
-    output_dir: Path | None = typer.Option(None, "--output-dir", help="Where .apkg files are written."),
-    here: bool = typer.Option(False, "--here", help=f"Write ./{CONFIG_FILE_NAME} instead of the user config "
-                                                     f"{user_config_path()}."),
-    force: bool = typer.Option(False, "--force", help="Overwrite an existing config (keeps a .bak copy)."),
-    yes: bool = typer.Option(False, "-y", "--yes", help="No questions; use options, a legacy .env, and defaults."),
+    vault: Path | None = typer.Option(None, "--vault", help="Obsidian vault folder path."),
+    deck: str | None = typer.Option(None, "--deck", help="Default Anki deck name (use '::' for subdecks)."),
+    base_tag: str | None = typer.Option(None, "--base-tag", help="Root tag prepended to every card (empty for none)."),
+    target: Target | None = typer.Option(None, "--target", help="Default export target: 'anki' (push via AnkiConnect) or 'apkg' (write file)."),
+    output_dir: Path | None = typer.Option(None, "--output-dir", help="Directory where .apkg packages and image occlusion files are written."),
+    here: bool = typer.Option(False, "--here", help=f"Write ./{CONFIG_FILE_NAME} in current directory instead of user config ({user_config_path()})."),
+    force: bool = typer.Option(False, "--force", help="Overwrite existing configuration file (creates a .bak backup)."),
+    yes: bool = YES_OPTION,
 ) -> int:
     interactive = ui.interactive() and not yes
     ui.header("m2a init")
@@ -147,6 +146,6 @@ def _write(cfg: Config, target_path: Path, force: bool, migrated: bool) -> None:
     console.print(f"  [dim]target[/]   {cfg.target}")
     console.print()
     console.print("next:")
-    console.print("  [cyan]m2a check[/]           see problems before exporting")
-    console.print("  [cyan]m2a status[/]          counts per course")
-    console.print("  [cyan]m2a sync --dry-run[/]  preview the first export")
+    console.print("  [cyan]m2a status[/]          check card counts and vault health")
+    console.print("  [cyan]m2a status -v[/]       list cards and diagnostics in detail")
+    console.print("  [cyan]m2a sync -n[/]         preview the first export (dry run)")

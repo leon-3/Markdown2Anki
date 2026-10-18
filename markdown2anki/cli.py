@@ -16,8 +16,13 @@ from .commands import init, inspect, orphans, sync, templates, unflag
 from .commands._shared import GlobalOptions
 from .config import CONFIG_FILE_NAME, user_config_path
 
-app = typer.Typer(help="Convert Obsidian flashcard notes into Anki cards.", no_args_is_help=True,
-                  add_completion=True, rich_markup_mode="rich", pretty_exceptions_enable=False)
+app = typer.Typer(
+    help="Convert Obsidian flashcard notes into Anki cards via AnkiConnect or standalone .apkg packages.",
+    no_args_is_help=True,
+    add_completion=True,
+    rich_markup_mode="rich",
+    pretty_exceptions_enable=False,
+)
 
 
 def _version(value: bool) -> None:
@@ -29,12 +34,13 @@ def _version(value: bool) -> None:
 @app.callback()
 def main_options(
     ctx: typer.Context,
-    config: Path | None = typer.Option(None, "-c", "--config",
-                                       help=f"Path to {CONFIG_FILE_NAME} (default: search upwards, then "
-                                            f"{user_config_path()})."),
+    config: Path | None = typer.Option(
+        None, "-c", "--config",
+        help=f"Path to {CONFIG_FILE_NAME} (default: search upwards, then {user_config_path()}).",
+    ),
     vault: Path | None = typer.Option(None, "--vault", help="Override the vault directory from the config."),
-    trace: bool = typer.Option(False, "--trace", help="Log each phase to stderr (also: M2A_TRACE=1)."),
-    version: bool = typer.Option(False, "--version", callback=_version, is_eager=True, help="Show the version."),
+    trace: bool = typer.Option(False, "--trace", help="Log execution phases to stderr (also enabled via M2A_TRACE=1)."),
+    version: bool = typer.Option(False, "--version", callback=_version, is_eager=True, help="Show the version and exit."),
 ) -> None:
     ctx.obj = GlobalOptions(config=config, vault=vault)
     if trace:
@@ -47,11 +53,27 @@ app.command(
     "status",
     rich_help_panel="Core Workflow",
     help="Show cards overview per course and run vault health check.",
+    epilog="""[bold cyan]Examples:[/]
+  [dim]$[/] [bold]m2a status[/]                     Overview of all courses and health check
+  [dim]$[/] [bold]m2a status -v[/]                  Detailed card list and diagnostics
+  [dim]$[/] [bold]m2a status --course "CS101"[/]    Filter by course name or tag
+  [dim]$[/] [bold]m2a status -f "Notes/W01.md"[/]   Inspect a single markdown note
+""",
 )(inspect.status)
+
 app.command(
     "sync",
     rich_help_panel="Core Workflow",
     help="Export new or updated cards to Anki and flag them in the vault.",
+    epilog="""[bold cyan]Examples:[/]
+  [dim]$[/] [bold]m2a sync -n[/]                    Dry run: preview cards to export without changes
+  [dim]$[/] [bold]m2a sync[/]                       Export new cards to Anki and write ADDED flags
+  [dim]$[/] [bold]m2a sync -u[/]                    Export new cards and update modified existing cards
+  [dim]$[/] [bold]m2a sync -u -v[/]                 Update cards with detailed card table
+  [dim]$[/] [bold]m2a sync --course "CS101"[/]     Sync cards from a specific course
+  [dim]$[/] [bold]m2a sync -f "Notes/W01.md"[/]    Sync only cards from a specific note file
+  [dim]$[/] [bold]m2a sync --target apkg -o out.apkg[/]  Export offline .apkg package
+""",
 )(sync.run)
 
 # Setup & Configuration
@@ -59,16 +81,35 @@ app.command(
     "init",
     rich_help_panel="Setup & Configuration",
     help="Interactive wizard to create m2a.toml.",
+    epilog="""[bold cyan]Examples:[/]
+  [dim]$[/] [bold]m2a init[/]                       Interactive setup wizard (creates ~/.config/m2a/m2a.toml)
+  [dim]$[/] [bold]m2a init --here[/]                Create local ./m2a.toml in current directory
+  [dim]$[/] [bold]m2a init --vault ~/Notes -y[/]    Non-interactive setup with defaults
+""",
 )(init.run)
+
 app.command(
     "config",
     rich_help_panel="Setup & Configuration",
     help="Inspect, validate, or edit the active configuration.",
+    epilog="""[bold cyan]Examples:[/]
+  [dim]$[/] [bold]m2a config[/]                     Display active configuration and AnkiConnect status
+  [dim]$[/] [bold]m2a config --validate[/]          Check configuration semantics and verify Anki connection
+  [dim]$[/] [bold]m2a config --path[/]              Show path to active m2a.toml
+  [dim]$[/] [bold]m2a config --raw[/]               Print raw TOML configuration file
+  [dim]$[/] [bold]m2a config --edit[/]              Open active config in $EDITOR
+""",
 )(inspect.config)
+
 app.command(
     "templates",
     rich_help_panel="Setup & Configuration",
     help="Compare local card templates with Anki note types and push them.",
+    epilog="""[bold cyan]Examples:[/]
+  [dim]$[/] [bold]m2a templates --diff[/]           Compare local templates with Anki note types
+  [dim]$[/] [bold]m2a templates[/]                  Push updated templates to Anki (prompts for confirmation)
+  [dim]$[/] [bold]m2a templates -y[/]               Push updated templates without confirmation
+""",
 )(templates.run)
 
 # Maintenance & Cleanup
@@ -76,11 +117,27 @@ app.command(
     "orphans",
     rich_help_panel="Maintenance & Cleanup",
     help="Detect and resolve drift between Obsidian vault and Anki.",
+    epilog="""[bold cyan]Examples:[/]
+  [dim]$[/] [bold]m2a orphans[/]                    Detect drift (cards removed from vault or deleted in Anki)
+  [dim]$[/] [bold]m2a orphans --suspend -n[/]       Dry run: preview which orphaned cards would be suspended
+  [dim]$[/] [bold]m2a orphans --suspend[/]          Suspend removed vault cards in Anki (preserves review history)
+  [dim]$[/] [bold]m2a orphans --delete[/]           Permanently delete orphaned notes from Anki
+  [dim]$[/] [bold]m2a orphans --mark-deleted[/]     Mark cards missing in Anki as DELETED in vault notes
+  [dim]$[/] [bold]m2a orphans --recreate[/]         Re-export cards missing in Anki back into Anki
+""",
 )(orphans.run)
+
 app.command(
     "unflag",
     rich_help_panel="Maintenance & Cleanup",
     help="Remove ADDED/DELETED flags so cards are exported again as new.",
+    epilog="""[bold cyan]Examples:[/]
+  [dim]$[/] [bold]m2a unflag -n[/]                  Dry run: preview which flags would be removed
+  [dim]$[/] [bold]m2a unflag[/]                     Remove ADDED and DELETED flags from all vault cards
+  [dim]$[/] [bold]m2a unflag -f "Notes/W01.md"[/]  Remove flags only from a specific note file
+  [dim]$[/] [bold]m2a unflag --course "CS101"[/]   Remove flags only for a specific course
+  [dim]$[/] [bold]m2a unflag --legacy[/]            Remove only legacy 'ADDED: ' flags (without ID)
+""",
 )(unflag.run)
 
 # Backward-compatible hidden alias

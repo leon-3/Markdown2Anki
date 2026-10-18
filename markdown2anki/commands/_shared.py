@@ -15,16 +15,38 @@ from ..ui import console, escape
 INDENT = "  "
 COURSE_OPTION = typer.Option(
     None, "--course",
-    help="Filter by course (folder name or tag; glob or substring).",
+    help="Filter by course folder name or tag (glob or substring).",
+)
+FILE_OPTION = typer.Option(
+    None, "-f", "--file",
+    help="Only process this markdown note file (path relative to current directory or vault).",
 )
 YES_OPTION = typer.Option(
     False, "-y", "--yes",
-    help="Skip confirmation prompts.",
+    help="Skip interactive confirmation prompts.",
 )
 DRY_RUN_OPTION = typer.Option(
     False, "-n", "--dry-run",
     help="Show what would change without modifying files or Anki.",
 )
+VERBOSE_OPTION = typer.Option(
+    False, "-v", "--verbose",
+    help="Show detailed list of cards and diagnostics.",
+)
+
+
+def resolve_note_file(file: Path | None, vault_root: Path) -> Path | None:
+    """Resolve a user-provided file path relative to cwd or vault root."""
+    if file is None:
+        return None
+    expanded = file.expanduser()
+    if expanded.is_file():
+        return expanded.resolve()
+    if not expanded.is_absolute():
+        in_vault = (vault_root / expanded).resolve()
+        if in_vault.is_file():
+            return in_vault
+    return expanded.resolve()
 
 
 @dataclass

@@ -12,7 +12,7 @@ from ._shared import YES_OPTION, load
 def run(
     ctx: typer.Context,
     yes: bool = YES_OPTION,
-    diff: bool = typer.Option(False, "--diff", help="Only show what differs, never push."),
+    diff: bool = typer.Option(False, "--diff", help="Only show template differences with Anki without pushing changes."),
 ) -> int:
     cfg = load(ctx)
     ui.header("m2a templates", f"{cfg.templates_dir}  →  {cfg.anki_connect_url}")

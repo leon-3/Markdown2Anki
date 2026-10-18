@@ -9,27 +9,32 @@ from .. import ui
 from ..flags import clear_flags
 from ..ui import console, escape
 from ..vault import collect
-from ._shared import COURSE_OPTION, DRY_RUN_OPTION, YES_OPTION, load, rel, short_question
+from ._shared import COURSE_OPTION, DRY_RUN_OPTION, FILE_OPTION, YES_OPTION, load, rel, resolve_note_file, short_question
 
 
 def run(
     ctx: typer.Context,
     course: str | None = COURSE_OPTION,
-    file: Path | None = typer.Option(None, "--file", help="Only this note file."),
-    legacy: bool = typer.Option(False, "--legacy", help="Only old `ADDED: ` flags without an id."),
+    file: Path | None = FILE_OPTION,
+    legacy: bool = typer.Option(False, "--legacy", help="Only target legacy 'ADDED: ' flags without a card ID."),
     dry_run: bool = DRY_RUN_OPTION,
     yes: bool = YES_OPTION,
 ) -> int:
     cfg = load(ctx)
+    target_file = resolve_note_file(file, cfg.vault) if file else None
+    if target_file and not target_file.is_file():
+        ui.error(f"file not found: {file}")
+        return 2
+
     collected = collect(cfg, course, trace_fn=ui.trace)
     chosen = [c for c in collected.cards if c.added or c.deleted]
-    if file:
-        wanted = file.expanduser().resolve()
-        chosen = [c for c in chosen if c.file.resolve() == wanted]
+    if target_file:
+        chosen = [c for c in chosen if c.file.resolve() == target_file]
     if legacy:
         chosen = [c for c in chosen if c.card_id is None]
 
-    ui.header("m2a unflag", str(cfg.vault))
+    header_src = rel(target_file, cfg) if target_file else str(cfg.vault)
+    ui.header("m2a unflag", header_src)
     if not chosen:
         console.print("  [dim]no flagged cards match[/]")
         return 0
