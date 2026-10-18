@@ -560,3 +560,49 @@ def test_summary_line_and_broken_pipe(monkeypatch):
         raise BrokenPipeError()
     monkeypatch.setattr(markdown2anki.cli, "app", mock_app)
     assert run("status") == 0
+
+
+def test_status_healthy_vs_broken_vault(vault, capsys):
+    v, cfg_path = vault
+    # Healthy vault
+    assert run("-c", cfg_path, "status") == 0
+    out = capsys.readouterr().out
+    assert "✓ Vault healthy" in out
+    assert "0 errors, 0 warnings" in out
+
+    # Broken card in vault (missing image produces an error diagnostic in build)
+    broken_note = v / "50.054 Compiler" / "Anki - Lectures" / "broken.md"
+    broken_note.write_text("---\nQuestion\n![[nonexistent_image.png]]\n", encoding="utf-8")
+    assert run("-c", cfg_path, "status") == 1
+    out = capsys.readouterr().out
+    assert "✗ 1 error" in out
+    assert "1 card would be skipped during sync" in out
+
+
+def test_status_deleted_cards_not_counted_as_pending(vault, capsys):
+    v, cfg_path = vault
+    note = v / "50.054 Compiler" / "Anki - Lectures" / "W01 Intro.md"
+    # Append a DELETED card
+    content = note.read_text(encoding="utf-8") + "\n---\nDELETED: Old Question %%old123%%\nOld Answer\n"
+    note.write_text(content, encoding="utf-8")
+
+    assert run("-c", cfg_path, "status") == 0
+    out = capsys.readouterr().out
+    # Total cards in summary: 4 active + 1 deleted
+    assert "cards 4" in out
+    assert "pending 3" in out
+    assert "added 1" in out
+    assert "deleted 1" in out
+
+
+def test_status_verbose_shows_card_states(vault, capsys):
+    v, cfg_path = vault
+    note = v / "50.054 Compiler" / "Anki - Lectures" / "W01 Intro.md"
+    content = note.read_text(encoding="utf-8") + "\n---\nDELETED: Old Question %%old123%%\nOld Answer\n"
+    note.write_text(content, encoding="utf-8")
+
+    assert run("-c", cfg_path, "status", "-v") == 0
+    out = capsys.readouterr().out
+    assert "new" in out
+    assert "added" in out
+    assert "deleted" in out
