@@ -371,7 +371,7 @@ def test_sync_recovers_from_missing_media(tmp_path, capsys):
     cfg_path = tmp_path / "m2a.toml"
     cfg_path.write_text(render_toml(cfg), encoding="utf-8")
 
-    assert run("-c", cfg_path, "sync", "--yes") == 0
+    assert run("-c", cfg_path, "sync", "--yes") == 1
     out = capsys.readouterr().out
     assert "image not found: missing_image_xyz.png" in out
     assert "skipped 1" in out
@@ -488,30 +488,30 @@ def test_sync_mark_deleted_and_recreate_missing(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(ankiconnect.AnkiConnect, "invoke", lambda self, action, **p: fake.invoke(action, **p))
     monkeypatch.setattr(ankiconnect.AnkiConnect, "reachable", lambda self: True)
 
-    # 0. Plain sync (no --update) notifies about cards deleted in Anki
+    # 0. Plain sync (no --update) notifies about cards deleted in Anki with orphans guidance
     assert run("-c", cfg_file, "sync") == 0
     out = capsys.readouterr().out
-    assert "deleted in Anki (still active in vault)" in out
+    assert "2 card(s) were deleted in Anki. Run m2a orphans to review and resolve." in out
 
-    # 1. By default, missing cards are skipped and hint is shown
+    # 1. By default with --update, missing cards are detected and warning is shown
     assert run("-c", cfg_file, "sync", "--update") == 0
     out = capsys.readouterr().out
-    assert "missing card(s) skipped in Anki" in out
+    assert "2 card(s) were deleted in Anki. Run m2a orphans to review and resolve." in out
     assert "ADDED: Question Missing %%miss111%%" in note_file.read_text(encoding="utf-8")
 
-    # 2. With --mark-deleted, both basic and image occlusion cards are marked DELETED: in note
-    assert run("-c", cfg_file, "sync", "--update", "--mark-deleted") == 0
+    # 2. In m2a orphans --mark-deleted, both basic and image occlusion cards are marked DELETED: in note
+    assert run("-c", cfg_file, "orphans", "--mark-deleted", "--yes") == 0
     out = capsys.readouterr().out
-    assert "marked 2 card(s) as DELETED" in out
+    assert "Marked 2 card(s) as DELETED" in out
     txt = note_file.read_text(encoding="utf-8")
     assert "DELETED: Question Missing %%miss111%%" in txt
     assert "DELETED: Image Cloze %%occ222%%" in txt
 
-    # 3. With --recreate-missing (revert to ADDED first)
+    # 3. With m2a orphans --recreate (revert to ADDED first)
     note_file.write_text(note_content, encoding="utf-8")
-    assert run("-c", cfg_file, "sync", "--recreate-missing", "--yes") == 0
+    assert run("-c", cfg_file, "orphans", "--recreate", "--yes") == 0
     out = capsys.readouterr().out
-    assert "1 added" in out
+    assert "Recreated 1 card(s)" in out
     assert any(a == "addNotes" for a, p in fake.calls)
 
 def test_sync_summary_output(vault, capsys):
@@ -839,3 +839,44 @@ def test_orphans_dry_run_and_recreate_flow(vault, monkeypatch, capsys):
     assert "Recreated 1 card(s)" in combined_out
     assert any(a == "deleteNotes" and p.get("notes") == [999] for a, p in fake.calls)
     assert any(a == "addNotes" for a, p in fake.calls)
+
+
+def test_unflag_dry_run_and_confirmation_abort(vault, monkeypatch, capsys):
+    from markdown2anki import ui
+    v, cfg_path = vault
+    note = v / "50.054 Compiler" / "Anki - Lectures" / "W01 Intro.md"
+    content = note.read_text(encoding="utf-8") + "\n---\nADDED: Duplicate Risk Q %%dup111%%\nDup Answer\n"
+    note.write_text(content, encoding="utf-8")
+
+    # 1. Dry run
+    assert run("-c", cfg_path, "unflag", "--dry-run") == 0
+    dry_out = capsys.readouterr().out
+    assert "dry run - nothing written" in dry_out
+    assert "ADDED: Duplicate Risk Q %%dup111%%" in note.read_text(encoding="utf-8")
+
+    # 2. Confirmation abort with duplicate warning
+    monkeypatch.setattr(ui, "confirm", lambda msg: False)
+    assert run("-c", cfg_path, "unflag") == 0
+    abort_out = capsys.readouterr().out
+    assert "warning:" in abort_out
+    assert "duplicate" in abort_out
+    assert "nothing changed" in abort_out
+    assert "ADDED: Duplicate Risk Q %%dup111%%" in note.read_text(encoding="utf-8")
+
+
+def test_unflag_warning_only_when_added_cards_present(vault, monkeypatch, capsys):
+    from markdown2anki import ui
+    v, cfg_path = vault
+    note = v / "50.054 Compiler" / "Anki - Lectures" / "W01 Intro.md"
+    # Remove existing ADDED flag and only have a DELETED card
+    cleaned = note.read_text(encoding="utf-8").replace("ADDED: already exported", "already exported")
+    content = cleaned + "\n---\nDELETED: Cleaned Up Q %%del999%%\nCleaned Up Answer\n"
+    note.write_text(content, encoding="utf-8")
+
+    monkeypatch.setattr(ui, "confirm", lambda msg: True)
+    assert run("-c", cfg_path, "unflag", "--yes") == 0
+    out = capsys.readouterr().out
+    # When unflagging only DELETED cards, no duplicate warning is shown
+    assert "warning: 1 card(s) are currently marked ADDED" not in out
+    assert "unflagged 1 card(s)" in out
+    assert "DELETED: Cleaned Up Q" not in note.read_text(encoding="utf-8")

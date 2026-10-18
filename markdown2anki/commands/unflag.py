@@ -1,4 +1,4 @@
-"""``m2a unflag``: remove ADDED flags so cards are exported again as new notes."""
+"""``m2a unflag``: remove ADDED/DELETED flags so cards are exported again as new notes."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,14 +9,15 @@ from .. import ui
 from ..flags import clear_flags
 from ..ui import console, escape
 from ..vault import collect
-from ._shared import COURSE_OPTION, YES_OPTION, load, rel, short_question
+from ._shared import COURSE_OPTION, DRY_RUN_OPTION, YES_OPTION, load, rel, short_question
 
 
 def run(
     ctx: typer.Context,
     course: str | None = COURSE_OPTION,
-    file: Path | None = typer.Option(None, "--file", help="Only this note."),
+    file: Path | None = typer.Option(None, "--file", help="Only this note file."),
     legacy: bool = typer.Option(False, "--legacy", help="Only old `ADDED: ` flags without an id."),
+    dry_run: bool = DRY_RUN_OPTION,
     yes: bool = YES_OPTION,
 ) -> int:
     cfg = load(ctx)
@@ -32,17 +33,42 @@ def run(
     if not chosen:
         console.print("  [dim]no flagged cards match[/]")
         return 0
-    rows = [[f"[dim]{c.card_id or 'legacy'}[/]", escape(f"{rel(c.file, cfg)}:{c.line}"), escape(short_question(c))]
-            for c in chosen]
-    console.print(ui.table(["id", "where", "question"], rows))
+
+    rows = [
+        [
+            "[red]deleted[/]" if c.deleted else "[dim]added[/]",
+            f"[dim]{escape(c.card_id or 'legacy')}[/]",
+            escape(f"{rel(c.file, cfg)}:{c.line}"),
+            escape(short_question(c)),
+        ]
+        for c in chosen
+    ]
+    console.print(ui.table(["state", "id", "where", "question"], rows))
     console.print()
-    console.print("  [yellow]note:[/] unflagged cards are exported again as [bold]new[/] notes; "
-                  "delete the old ones in Anki yourself if they were imported.")
+
+    if dry_run:
+        console.print("  [dim]dry run - nothing written[/]")
+        return 0
+
+    added_count = sum(1 for c in chosen if c.added)
+    if added_count:
+        console.print(
+            f"  [yellow]warning:[/] [bold]{added_count}[/] card(s) are currently marked [bold]ADDED[/].\n"
+            "  Removing their flags causes the next `m2a sync` to export them as brand-new notes,\n"
+            "  creating duplicates in Anki unless the existing Anki notes are deleted via `m2a orphans`."
+        )
     if not yes and not ui.confirm(f"Remove the flag from {len(chosen)} card(s)?"):
         console.print("  [dim]nothing changed[/]")
         return 0
-    cleared, problems = clear_flags(chosen)
+
+    try:
+        cleared, problems = clear_flags(chosen)
+    except OSError as exc:
+        ui.error(f"failed to clear flags: {exc}")
+        return 1
     console.print(f"  [green]✓[/] unflagged [bold]{cleared}[/] card(s)")
-    for problem in problems:
-        console.print(f"    {ui.level('warning')} {escape(problem)}")
+    if problems:
+        for problem in problems:
+            console.print(f"    {ui.level('warning')} {escape(problem)}")
+        return 1
     return 0

@@ -11,12 +11,12 @@ from ..config import Config, Target
 import re
 from ..export.ankiconnect import AnkiConnect, AnkiConnectError, export_ankiconnect, resolve_model_names
 from ..export.apkg import drop_unsupported_updates, export_apkg
-from ..flags import write_deleted_flags, write_flags
+from ..flags import write_flags
 from ..occlusions import export_occlusions
 from ..parser import KIND_IMAGE_OCCLUSION, Card, Diagnostic
 from ..ui import console, escape
 from ..vault import collect
-from ._shared import COURSE_OPTION, INDENT, load, print_card_table, print_diagnostics, print_problems
+from ._shared import COURSE_OPTION, DRY_RUN_OPTION, INDENT, YES_OPTION, load, print_card_table, print_diagnostics, print_problems
 
 M2A_MARKER_RE = re.compile(r"<!--m2a:([0-9a-z]{4,12})-->")
 
@@ -59,29 +59,39 @@ Flags = list[tuple[Card, str]]
 def run(
     ctx: typer.Context,
     course: str | None = COURSE_OPTION,
-    target: Target | None = typer.Option(None, "--target", help="apkg: write a package file; anki: push via "
-                                                                "AnkiConnect (default: 'target' in config)."),
-    update: bool = typer.Option(False, "--update", help="Also re-export cards that were already added with an id "
-                                                        "(updates them in Anki)."),
-    mark_deleted: bool = typer.Option(False, "--mark-deleted", help="Mark cards missing in Anki as DELETED in markdown notes."),
-    recreate_missing: bool = typer.Option(False, "--recreate-missing", help="Recreate cards in Anki that were deleted in Anki."),
-    dry_run: bool = typer.Option(False, "-n", "--dry-run", help="Show what would be exported, write nothing."),
-    no_flag: bool = typer.Option(False, "--no-flag", help="Export but do not write ADDED flags into the notes."),
-    yes: bool = typer.Option(False, "-y", "--yes", help="Do not ask before writing ADDED flags."),
-    output: Path | None = typer.Option(None, "-o", "--output", help="apkg path (default: "
-                                                                    "<output_dir>/<package_name>.apkg)."),
-    stage_occlusions: bool = typer.Option(False, "--stage-occlusions", help="Also re-stage already-flagged image occlusions during --update."),
+    target: Target | None = typer.Option(
+        None, "--target",
+        help="apkg: write a package file; anki: push via AnkiConnect (default: 'target' in config).",
+    ),
+    update: bool = typer.Option(
+        False, "--update",
+        help="Also re-export already added cards to update them in Anki.",
+    ),
+    dry_run: bool = DRY_RUN_OPTION,
+    no_flag: bool = typer.Option(
+        False, "--no-flag",
+        help="Export cards but do not write ADDED flags into the markdown notes.",
+    ),
+    yes: bool = YES_OPTION,
+    output: Path | None = typer.Option(
+        None, "-o", "--output",
+        help="apkg output path (default: <output_dir>/<package_name>.apkg).",
+    ),
+    stage_occlusions: bool = typer.Option(
+        False, "--stage-occlusions",
+        help="Also re-stage already-flagged image occlusions during --update.",
+    ),
 ) -> int:
     cfg = load(ctx)
     collected = collect(cfg, course, trace_fn=ui.trace)
     chosen_target = target.value if target else cfg.target
     effective_occ_mode = cfg.image_occlusion_mode if chosen_target != Target.apkg.value else "stage"
     should_stage_occ = stage_occlusions or cfg.re_stage_occlusions
-    should_check_existing = update or mark_deleted or recreate_missing
-    include_occ = (effective_occ_mode == "native") or should_stage_occ or mark_deleted or recreate_missing
-    selected = [\
-        c for c in collected.cards\
-        if c.pending or (should_check_existing and c.updatable and (c.kind != KIND_IMAGE_OCCLUSION or include_occ))\
+    should_check_existing = update
+    include_occ = (effective_occ_mode == "native") or should_stage_occ
+    selected = [
+        c for c in collected.cards
+        if c.pending or (should_check_existing and c.updatable and (c.kind != KIND_IMAGE_OCCLUSION or include_occ))
     ]
     result = build(
         selected,
@@ -99,14 +109,12 @@ def run(
         print_problems(collected.diagnostics, cfg)
     _print_counts(result)
 
-    missing_warning: list[Card] = []
-    if chosen_target == Target.anki.value and not should_check_existing:
-        missing_warning = _find_missing_in_anki(cfg, collected.cards)
-
     if not result.notes and not result.occlusions:
         console.print("  [dim]nothing to export[/]")
-        if missing_warning:
-            console.print(f"  [yellow]warning:[/] {len(missing_warning)} card(s) were deleted in Anki (still active in vault) - run `m2a sync --mark-deleted` to mark them in vault, or `m2a orphans` to inspect")
+        if chosen_target == Target.anki.value and not dry_run and not update:
+            missing_warning = _find_missing_in_anki(cfg, collected.cards)
+            if missing_warning:
+                console.print(f"  [yellow]warning:[/] {len(missing_warning)} card(s) were deleted in Anki. Run [cyan]m2a orphans[/] to review and resolve.")
         _print_sync_summary(0, 0, 0, 0, 0)
         return 1 if collected.has_errors else 0
 
@@ -114,32 +122,30 @@ def run(
         console.print()
         cards = [n.card for n in result.notes] + [o.card for o in result.occlusions]
         cards.sort(key=lambda c: (str(c.file), c.line))
-        print_card_table(cards,
-                         lambda c: "[yellow]update[/]" if c.added else "[green]new[/]", state_header="")
+        print_card_table(
+            cards,
+            lambda c: "[yellow]update[/]" if c.added else "[green]new[/]",
+            state_header="",
+        )
         console.print()
         console.print("  [dim]dry run - nothing written[/]")
-        if missing_warning:
-            console.print(f"  [yellow]warning:[/] {len(missing_warning)} card(s) were deleted in Anki (still active in vault) - run `m2a sync --mark-deleted` to mark them in vault, or `m2a orphans` to inspect")
         return 0
 
     seen = len(collected.diagnostics)
-    flags, missing = _export(chosen_target, result, cfg, output, collected.diagnostics, recreate_missing=recreate_missing)
+    flags, missing = _export(chosen_target, result, cfg, output, collected.diagnostics)
     if flags is None:
         return 2
     print_diagnostics(collected.diagnostics[seen:], cfg)
     _flag(flags, no_flag, yes)
 
-    if missing:
-        if mark_deleted:
-            flagged, problems = write_deleted_flags(missing)
-            console.print(f"  [green]✓[/] marked [bold]{flagged}[/] card(s) as DELETED in {len({c.file for c in missing})} note(s)")
-            for problem in problems:
-                console.print(f"  [yellow]![/] {problem}")
-        else:
-            console.print(f"  [dim]({len(missing)} missing card(s) skipped in Anki; run `m2a sync --mark-deleted` to mark them in vault)[/]")
-    elif missing_warning:
-        console.print(f"  [yellow]warning:[/] {len(missing_warning)} card(s) were deleted in Anki (still active in vault) - run `m2a sync --mark-deleted` to mark them in vault, or `m2a orphans` to inspect")
-    return 0
+    missing_cards = missing
+    if not missing_cards and chosen_target == Target.anki.value and not update:
+        missing_cards = _find_missing_in_anki(cfg, collected.cards)
+
+    if missing_cards:
+        console.print(f"  [yellow]warning:[/] {len(missing_cards)} card(s) were deleted in Anki. Run [cyan]m2a orphans[/] to review and resolve.")
+
+    return 1 if collected.has_errors else 0
 
 
 def _print_counts(result: BuildResult) -> None:
@@ -194,11 +200,11 @@ def _print_staged_occlusions(staged: dict[str, list[str]]) -> None:
 
 
 def _export(target: str, result: BuildResult, cfg: Config, output: Path | None,
-            diagnostics: list[Diagnostic], recreate_missing: bool = False) -> tuple[Flags | None, list[Card]]:
+            diagnostics: list[Diagnostic]) -> tuple[Flags | None, list[Card]]:
     """Run the exporter and report; (None, []) when it failed."""
     if target == Target.anki.value:
         try:
-            export = export_ankiconnect(result, cfg, diagnostics, recreate_missing=recreate_missing)
+            export = export_ankiconnect(result, cfg, diagnostics)
         except AnkiConnectError as exc:
             ui.error(str(exc), "open Anki (with the AnkiConnect add-on) and retry, or use `m2a sync --target apkg`")
             return None, []
@@ -267,4 +273,4 @@ def _flag(flags: Flags, no_flag: bool, yes: bool) -> None:
     flagged, problems = write_flags(new_flags)
     console.print(f"  [green]✓[/] flagged [bold]{flagged}[/] card(s) in {len(files)} note(s)")
     for problem in problems:
-        console.print(f"  [yellow]![/] {problem}")
+        console.print(f"  [yellow]![/] {escape(problem)}")
