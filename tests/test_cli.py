@@ -606,3 +606,86 @@ def test_status_verbose_shows_card_states(vault, capsys):
     assert "new" in out
     assert "added" in out
     assert "deleted" in out
+
+
+def test_config_dashboard(vault, capsys):
+    v, cfg_path = vault
+    assert run("-c", cfg_path, "config") == 0
+    out = capsys.readouterr().out
+    assert "m2a config" in out
+    assert "vault" in out
+    assert "target" in out
+    assert "apkg" in out
+
+
+def test_config_flags_path_raw_and_exclusivity(vault, capsys):
+    v, cfg_path = vault
+    # --path
+    assert run("-c", cfg_path, "config", "--path") == 0
+    out = capsys.readouterr().out
+    assert out == f"{cfg_path}\n"
+
+    # --raw
+    assert run("-c", cfg_path, "config", "--raw") == 0
+    raw_out = capsys.readouterr().out
+    assert "vault =" in raw_out
+    assert "package_name =" in raw_out
+
+    # Mutual exclusivity
+    assert run("-c", cfg_path, "config", "--path", "--raw") == 2
+    err = capsys.readouterr().err
+    assert "mutually exclusive" in err
+
+    assert run("-c", cfg_path, "config", "--path", "--edit") == 2
+    assert "mutually exclusive" in capsys.readouterr().err
+
+
+def test_config_edit_interactive_and_validation(vault, monkeypatch, capsys):
+    v, cfg_path = vault
+    from markdown2anki import ui
+    import markdown2anki.commands.inspect as inspect_mod
+
+    # 1. Non-interactive rejects
+    monkeypatch.setattr(ui, "interactive", lambda: False)
+    assert run("-c", cfg_path, "config", "--edit") == 2
+    assert "non-interactive" in capsys.readouterr().err
+
+    # 2. Interactive with valid edit
+    monkeypatch.setattr(ui, "interactive", lambda: True)
+    monkeypatch.setattr(inspect_mod, "click_edit", lambda filename: None)
+    assert run("-c", cfg_path, "config", "--edit") == 0
+    assert "Configuration at" in capsys.readouterr().out
+
+    # 3. Interactive with syntax error (invalid TOML)
+    original_toml = cfg_path.read_text(encoding="utf-8")
+    def bad_syntax_edit(filename):
+        Path(filename).write_text("invalid = [unclosed", encoding="utf-8")
+    monkeypatch.setattr(inspect_mod, "click_edit", bad_syntax_edit)
+    assert run("-c", cfg_path, "config", "--edit") == 2
+    assert "invalid config after edit" in capsys.readouterr().err
+
+    # Restore valid TOML so load(ctx) succeeds initially
+    cfg_path.write_text(original_toml, encoding="utf-8")
+
+    # 4. Interactive with semantic error (non-existent vault directory)
+    def bad_semantic_edit(filename):
+        Path(filename).write_text(f"vault = \"{v / 'does_not_exist'}\"\n", encoding="utf-8")
+    monkeypatch.setattr(inspect_mod, "click_edit", bad_semantic_edit)
+    assert run("-c", cfg_path, "config", "--edit") == 2
+    assert "vault directory does not exist" in capsys.readouterr().err
+
+    # 5. Interactive with invalid deck name
+    cfg_path.write_text(original_toml, encoding="utf-8")
+    def bad_deck_edit(filename):
+        Path(filename).write_text(f"vault = \"{v}\"\ndeck = \"::BadDeck\"\n", encoding="utf-8")
+    monkeypatch.setattr(inspect_mod, "click_edit", bad_deck_edit)
+    assert run("-c", cfg_path, "config", "--edit") == 2
+    assert "invalid deck name" in capsys.readouterr().err
+
+    # 6. Interactive with editor launch exception
+    cfg_path.write_text(original_toml, encoding="utf-8")
+    def broken_editor_edit(filename):
+        raise RuntimeError("Editor crashed")
+    monkeypatch.setattr(inspect_mod, "click_edit", broken_editor_edit)
+    assert run("-c", cfg_path, "config", "--edit") == 2
+    assert "could not launch editor" in capsys.readouterr().err
