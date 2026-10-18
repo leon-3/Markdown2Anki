@@ -117,9 +117,9 @@ def run(
     should_stage_occ = stage_occlusions or cfg.re_stage_occlusions
     should_check_existing = update
     include_occ = (effective_occ_mode == "native") or should_stage_occ
-    selected = [\
-        c for c in collected.cards\
-        if c.pending or (should_check_existing and c.updatable and (c.kind != KIND_IMAGE_OCCLUSION or include_occ))\
+    selected = [
+        c for c in collected.cards
+        if c.pending or (should_check_existing and c.updatable and (c.kind != KIND_IMAGE_OCCLUSION or include_occ))
     ]
     result = build(
         selected,
@@ -224,9 +224,9 @@ def _print_sync_summary(added: int, basic: int, image_cloze: int, text_cloze: in
 def _print_staged_occlusions(staged: dict[str, list[str]]) -> None:
     for tag, filenames in staged.items():
         console.print()
-        console.print(f"  [bold cyan]{escape(tag)}[/]")
+        console.print(f"    [bold cyan]{escape(tag)}[/]")
         for fname in filenames:
-            console.print(f"  - {escape(fname)}")
+            console.print(f"    - {escape(fname)}")
 
 
 def _export(target: str, result: BuildResult, cfg: Config, output: Path | None,
@@ -244,13 +244,6 @@ def _export(target: str, result: BuildResult, cfg: Config, output: Path | None,
         summary_str = ", ".join(parts)
         console.print(f"  [green]✓[/] AnkiConnect: {summary_str} "
                       f"in deck [bold]{escape(cfg.deck)}[/]  [dim]{export.media_count} media files[/]")
-        if result.occlusions:
-            base_dir = output.parent if output else cfg.output_dir
-            occ_dir, occ_flags, staged = export_occlusions(result.occlusions, base_dir)
-            export.flags.extend(occ_flags)
-            console.print(f"  [green]✓[/] staged [bold]{len(result.occlusions)}[/] image occlusion(s) to "
-                          f"[bold]{escape(str(occ_dir))}[/]")
-            _print_staged_occlusions(staged)
 
         total_added = export.added + len(result.occlusions)
         total_basic = export.added_basic
@@ -258,14 +251,19 @@ def _export(target: str, result: BuildResult, cfg: Config, output: Path | None,
         total_text_cloze = export.added_text_cloze
         _print_sync_summary(total_added, total_basic, total_img_cloze, total_text_cloze, export.updated)
 
+        if result.occlusions:
+            base_dir = output.parent if output else cfg.output_dir
+            occ_dir, occ_flags, staged = export_occlusions(result.occlusions, base_dir)
+            export.flags.extend(occ_flags)
+            console.print()
+            console.print(f"  [dim]image occlusion sources:[/] [bold]{escape(str(occ_dir))}[/]")
+            _print_staged_occlusions(staged)
+
         return export.flags, export.missing_in_anki
 
     export = export_apkg(result, output or cfg.apkg_path, cfg=cfg)
     console.print(f"  [green]✓[/] wrote [bold]{escape(str(export.path))}[/]  "
                   f"[dim]deck {escape(cfg.deck)}, {export.note_count} notes, {export.media_count} media files[/]")
-    if export.occlusion_dir and export.staged_occlusions:
-        console.print(f"  [dim]image occlusion sources:[/] {escape(str(export.occlusion_dir))}")
-        _print_staged_occlusions(export.staged_occlusions)
 
     from ..build import MODEL_BASIC, MODEL_CLOZE, MODEL_IMAGE_OCCLUSION
     basic = sum(1 for n in result.notes if (
@@ -284,6 +282,11 @@ def _export(target: str, result: BuildResult, cfg: Config, output: Path | None,
     ))
     total_added = basic + img_cloze + text_cloze
     _print_sync_summary(total_added, basic, img_cloze, text_cloze, 0)
+
+    if export.occlusion_dir and export.staged_occlusions:
+        console.print()
+        console.print(f"  [dim]image occlusion sources:[/] [bold]{escape(str(export.occlusion_dir))}[/]")
+        _print_staged_occlusions(export.staged_occlusions)
 
     return export.flags, []
 

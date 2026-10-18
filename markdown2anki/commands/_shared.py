@@ -92,7 +92,7 @@ def print_diagnostics(diagnostics: Sequence[Diagnostic], cfg: Config, indent: st
         location = f"{rel(d.file, cfg)}:{d.line}" if d.line else rel(d.file, cfg)
         console.print(f"{indent}{ui.level(d.level)} [cyan]{escape(location)}[/]  {escape(d.message)}")
         if d.suggestion:
-            console.print(f"{indent}        [dim italic]Tip: {escape(d.suggestion)}[/]")
+            console.print(f"{indent}  [dim italic]Tip: {escape(d.suggestion)}[/]")
         errors += d.level == LEVEL_ERROR
     return errors
 

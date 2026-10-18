@@ -65,10 +65,14 @@ def kv(pairs: Sequence[tuple]) -> str:
     return "[dim] · [/]".join(f"[dim]{escape(str(k))}[/] [bold]{escape(str(v))}[/]" for k, v in pairs)
 
 
-def level(name: str) -> str:
+def level(name: str | object) -> str:
     """Coloured, fixed-width diagnostic level (markup)."""
-    colour = {"error": "red", "warning": "yellow", "info": "dim"}.get(name)
-    text = f"{name:7}"
+    raw = name.value if hasattr(name, "value") else str(name)
+    if "." in raw:
+        raw = raw.split(".")[-1]
+    raw = raw.lower()
+    colour = {"error": "red", "warning": "yellow", "info": "dim"}.get(raw)
+    text = f"{raw:7}"
     return f"[{colour}]{text}[/]" if colour else text
 
 
