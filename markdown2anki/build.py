@@ -10,7 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .constants import CLOZE_TAG, CODE_KEYWORDS, CODE_TAG, OCCLUSION_TAG
-from .parser import KIND_CLOZE, KIND_IMAGE_OCCLUSION, LEVEL_ERROR, LEVEL_WARNING, Card, Diagnostic
+from .diagnostics import Diagnostic, DiagnosticCategory, DiagnosticLevel
+from .parser import KIND_CLOZE, KIND_IMAGE_OCCLUSION, LEVEL_ERROR, LEVEL_WARNING, Card
 from .render import render_markdown, strip_keyword_lines
 
 OBSIDIAN_IMAGE_RE = re.compile(r"!\[\[([^\]|]+)(?:\|([^\]]*))?\]\]")
@@ -179,7 +180,14 @@ def _occlusion(card: Card, vault_root: Path | None = None) -> ImageOcclusion:
         if resolved is not None:
             paths.append(resolved)
         else:
-            missing.append(Diagnostic(card.file, card.line, LEVEL_ERROR, f"image not found: {name}"))
+            missing.append(Diagnostic(
+                file=card.file,
+                line=card.line,
+                level=LEVEL_ERROR,
+                category=DiagnosticCategory.MEDIA,
+                message=f"image not found: {name}",
+                suggestion="Ensure the file is located in the note folder or configured attachment directory.",
+            ))
     if missing or not paths:
         raise _Skip(*missing)
     return ImageOcclusion(card, paths, card.tag)
@@ -229,7 +237,14 @@ def _format_image_tag(
     name = name.strip()
     path = resolve_image_path(card, name, vault_root)
     if path is None:
-        missing.append(Diagnostic(card.file, card.line, LEVEL_ERROR, f"image not found next to the note: {name}"))
+        missing.append(Diagnostic(
+            file=card.file,
+            line=card.line,
+            level=LEVEL_ERROR,
+            category=DiagnosticCategory.MEDIA,
+            message=f"image not found next to the note: {name}",
+            suggestion="Ensure the file is located in the note folder or configured attachment directory.",
+        ))
         img_src = Path(name).name
     else:
         if path not in media:
@@ -319,9 +334,17 @@ class _MediaNames:
             target_name = names.get(path, path.name)
             first = self.by_name.setdefault(target_name, path)
             if first != path and not filecmp.cmp(first, path, shallow=False):
-                raise _Skip(Diagnostic(note.card.file, note.card.line, LEVEL_ERROR,
-                                       f"media name clash: {path.name} differs from the file of the same name "
-                                       f"in {first.parent.name}; rename one of them"))
+                raise _Skip(Diagnostic(
+                    file=note.card.file,
+                    line=note.card.line,
+                    level=LEVEL_ERROR,
+                    category=DiagnosticCategory.MEDIA,
+                    message=(
+                        f"media name clash: {path.name} differs from the file of the same name "
+                        f"in {first.parent.name}; rename one of them"
+                    ),
+                    suggestion="Rename one of the conflicting media files to avoid overwriting.",
+                ))
 
 
 def _check_html(note: RenderedNote, diagnostics: list[Diagnostic]) -> None:
@@ -329,9 +352,17 @@ def _check_html(note: RenderedNote, diagnostics: list[Diagnostic]) -> None:
     for text in note.fields:
         unknown = sorted({m.group(1) for m in HTML_TAG_RE.finditer(text) if m.group(1).lower() not in KNOWN_HTML_TAGS})
         if unknown:
-            diagnostics.append(Diagnostic(note.card.file, note.card.line, LEVEL_WARNING,
-                                          "looks like an HTML tag and will not display: "
-                                          + ", ".join(f"<{t}>" for t in unknown[:3]) + " - wrap it in backticks"))
+            diagnostics.append(Diagnostic(
+                file=note.card.file,
+                line=note.card.line,
+                level=LEVEL_WARNING,
+                category=DiagnosticCategory.SCHEMA,
+                message=(
+                    "looks like an HTML tag and will not display: "
+                    + ", ".join(f"<{t}>" for t in unknown[:3]) + " - wrap it in backticks"
+                ),
+                suggestion="Wrap code or type declarations in backticks (`<tag>`) to prevent rendering issues.",
+            ))
             return
 
 
@@ -358,7 +389,14 @@ def _native_occlusion(
         if resolved is not None:
             paths.append(resolved)
         else:
-            missing.append(Diagnostic(card.file, card.line, LEVEL_ERROR, f"image not found: {name}"))
+            missing.append(Diagnostic(
+                file=card.file,
+                line=card.line,
+                level=LEVEL_ERROR,
+                category=DiagnosticCategory.MEDIA,
+                message=f"image not found: {name}",
+                suggestion="Ensure the file is located in the note folder or configured attachment directory.",
+            ))
     if missing or not paths:
         raise _Skip(*missing)
 

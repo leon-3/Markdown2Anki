@@ -22,7 +22,8 @@ from ..models import (
     Template,
     load_template,
 )
-from ..parser import KIND_IMAGE_OCCLUSION, LEVEL_ERROR, LEVEL_WARNING, Card, Diagnostic
+from ..diagnostics import Diagnostic, DiagnosticCategory, DiagnosticLevel
+from ..parser import KIND_IMAGE_OCCLUSION, LEVEL_ERROR, LEVEL_WARNING, Card
 
 Flags = list[tuple[Card, str]]
 
@@ -312,9 +313,15 @@ def export_ankiconnect(
                     else:
                         export.missing_in_anki.append(note.card)
                         diag_list.append(Diagnostic(
-                            note.card.file, note.card.line, LEVEL_WARNING,
-                            "not found in Anki (deleted, other profile, or exported before ids "
-                            "were embedded) - run `m2a orphans --recreate` to add it again, or `m2a orphans --mark-deleted` to mark in vault; skipped",
+                            file=note.card.file,
+                            line=note.card.line,
+                            level=DiagnosticLevel.WARNING,
+                            category=DiagnosticCategory.CONFLICT,
+                            message=(
+                                "not found in Anki (deleted, other profile, or exported before ids "
+                                "were embedded) - run `m2a orphans --recreate` to add it again, or `m2a orphans --mark-deleted` to mark in vault; skipped"
+                            ),
+                            suggestion="Run `m2a orphans --recreate` to re-import, or `m2a orphans --mark-deleted` to sync deletion.",
                         ))
                         result.skipped.append(note.card)
 
@@ -508,8 +515,14 @@ def export_ankiconnect(
 
         for (note, card_id), note_id in zip(to_add, note_ids):
             if note_id is None:
-                diag_list.append(Diagnostic(note.card.file, note.card.line, LEVEL_ERROR,
-                                            "Anki refused the note (empty front field?); not added"))
+                diag_list.append(Diagnostic(
+                    file=note.card.file,
+                    line=note.card.line,
+                    level=DiagnosticLevel.ERROR,
+                    category=DiagnosticCategory.SCHEMA,
+                    message="Anki refused the note (empty front field?); not added",
+                    suggestion="Verify that the note front field is not empty and matches Anki model field requirements.",
+                ))
                 result.skipped.append(note.card)
                 continue
             export.flags.append((note.card, card_id))

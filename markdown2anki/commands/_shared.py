@@ -88,9 +88,11 @@ def short_question(card: Card, width: int = 60) -> str:
 def print_diagnostics(diagnostics: Sequence[Diagnostic], cfg: Config, indent: str = INDENT * 2) -> int:
     """Print diagnostics sorted by location; returns the number of errors."""
     errors = 0
-    for d in sorted(diagnostics, key=lambda d: (str(d.file), d.line)):
+    for d in sorted(diagnostics, key=lambda d: (str(d.file), d.line or 0)):
         location = f"{rel(d.file, cfg)}:{d.line}" if d.line else rel(d.file, cfg)
         console.print(f"{indent}{ui.level(d.level)} [cyan]{escape(location)}[/]  {escape(d.message)}")
+        if d.suggestion:
+            console.print(f"{indent}        [dim italic]Tip: {escape(d.suggestion)}[/]")
         errors += d.level == LEVEL_ERROR
     return errors
 

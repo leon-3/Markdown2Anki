@@ -12,6 +12,7 @@ import genanki
 
 from ..build import MODEL_CLOZE, BuildResult, ImageOcclusion, RenderedNote
 from ..config import Config
+from ..diagnostics import Diagnostic, DiagnosticCategory, DiagnosticLevel
 from ..ids import is_anki_note_id, new_card_id, with_marker
 from ..models import (
     BASIC_MODEL_ID,
@@ -23,7 +24,9 @@ from ..models import (
     load_template,
 )
 from ..occlusions import export_occlusions
-from ..parser import LEVEL_WARNING, Card, Diagnostic
+from ..parser import Card
+
+LEVEL_WARNING = DiagnosticLevel.WARNING
 
 Flags = list[tuple[Card, str]]
 
@@ -92,9 +95,19 @@ def drop_unsupported_updates(result: BuildResult, diagnostics: list[Diagnostic])
     kept: list[RenderedNote] = []
     for note in result.notes:
         if note.card.added and is_anki_note_id(note.card.card_id):
-            diagnostics.append(Diagnostic(note.card.file, note.card.line, LEVEL_WARNING,
-                                          "flagged with an Anki note id by an older version; an .apkg cannot "
-                                          "update it (use `--target anki --update`), skipped"))
+            diagnostics.append(
+                Diagnostic(
+                    file=note.card.file,
+                    line=note.card.line,
+                    level=DiagnosticLevel.WARNING,
+                    category=DiagnosticCategory.SCHEMA,
+                    message=(
+                        "flagged with an Anki note id by an older version; an .apkg cannot "
+                        "update it (use `--target anki --update`), skipped"
+                    ),
+                    suggestion="Re-export using `--target anki` to update existing cards via AnkiConnect.",
+                )
+            )
             result.skipped.append(note.card)
         else:
             kept.append(note)

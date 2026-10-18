@@ -10,6 +10,7 @@ import os
 import sys
 import time
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import questionary
 from rich import box
@@ -18,8 +19,11 @@ from rich.markup import escape
 from rich.padding import Padding
 from rich.table import Table
 
+if TYPE_CHECKING:
+    from .diagnostics import Diagnostic
+
 __all__ = ["console", "escape", "error", "trace", "enable_trace", "header", "kv", "level", "table", "interactive",
-           "ask_text", "ask_path", "ask_checkbox", "ask_select", "ask_confirm", "confirm"]
+           "ask_text", "ask_path", "ask_checkbox", "ask_select", "ask_confirm", "confirm", "format_diagnostic_cli"]
 
 console = Console(highlight=False, soft_wrap=True, width=None if sys.stdout.isatty() else 160)
 stderr = Console(stderr=True, highlight=False, soft_wrap=True)
@@ -66,6 +70,18 @@ def level(name: str) -> str:
     colour = {"error": "red", "warning": "yellow", "info": "dim"}.get(name)
     text = f"{name:7}"
     return f"[{colour}]{text}[/]" if colour else text
+
+
+def format_diagnostic_cli(diag: Diagnostic) -> str:
+    """Format a Diagnostic for Rich CLI output with escaped paths and tips."""
+    loc = escape(diag.location_label)
+    msg = escape(diag.message)
+    lvl = diag.level.value if hasattr(diag.level, "value") else str(diag.level)
+    color = "red" if lvl == "error" else "yellow" if lvl == "warning" else "blue"
+    formatted = f"[{color}]●[/] [cyan]{loc}[/] - {msg}"
+    if diag.suggestion:
+        formatted += f"\n    [dim italic]Tip: {escape(diag.suggestion)}[/]"
+    return formatted
 
 
 def table(headers: Sequence[str], rows: Sequence[Sequence[str]], align_right: Sequence[int] = ()) -> Padding:

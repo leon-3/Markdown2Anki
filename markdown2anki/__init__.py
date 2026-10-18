@@ -1,7 +1,8 @@
 """Markdown2Anki: turn Obsidian flashcard notes into Anki cards."""
 from importlib.metadata import PackageNotFoundError, version
 
-from .parser import Card, Diagnostic, parse_file, parse_lines
+from .diagnostics import Diagnostic, DiagnosticCategory, DiagnosticLevel
+from .parser import Card, parse_file, parse_lines
 from .build import BuildResult, RenderedNote, build, resolve_image_path
 from .render import render_markdown
 from .occlusions import export_occlusions
@@ -30,6 +31,8 @@ __all__ = [
     "__version__",
     "Card",
     "Diagnostic",
+    "DiagnosticCategory",
+    "DiagnosticLevel",
     "parse_file",
     "parse_lines",
     "build",
