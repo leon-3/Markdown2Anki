@@ -521,3 +521,42 @@ def test_sync_summary_output(vault, capsys):
     assert "Sync Summary:" in out
     assert "added" in out
 
+
+
+def test_help_panels_and_hidden_check(capsys):
+    assert run("--help") == 0
+    out = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", capsys.readouterr().out)
+    assert "Core Workflow" in out
+    assert "Setup & Configuration" in out
+    assert "Maintenance & Cleanup" in out
+    # check should be hidden in the main help overview
+    assert re.search(r"^\s*check\s+", out, re.M) is None
+    # but still accessible directly
+    assert run("check", "--help") == 0
+    check_help = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", capsys.readouterr().out)
+    assert "Usage: m2a check" in check_help
+
+
+def test_summary_line_and_broken_pipe(monkeypatch):
+    from markdown2anki.commands._shared import summary_line
+    from markdown2anki.parser import Diagnostic, LEVEL_ERROR, LEVEL_WARNING
+    from pathlib import Path
+
+    healthy = summary_line([])
+    assert "✓ Vault healthy" in healthy
+    assert "0 errors, 0 warnings" in healthy
+
+    diag_err = Diagnostic(Path("test.md"), 10, LEVEL_ERROR, "Broken image")
+    diag_warn = Diagnostic(Path("test.md"), 12, LEVEL_WARNING, "Loose whitespace")
+    summary = summary_line([diag_err, diag_warn], skipped_count=1)
+    assert "✗" in summary
+    assert "1 error" in summary
+    assert "1 warning" in summary
+    assert "1 card would be skipped during sync" in summary
+
+    # BrokenPipeError exit code 0
+    import markdown2anki.cli
+    def mock_app(**kwargs):
+        raise BrokenPipeError()
+    monkeypatch.setattr(markdown2anki.cli, "app", mock_app)
+    assert run("status") == 0

@@ -17,7 +17,7 @@ from .commands._shared import GlobalOptions
 from .config import CONFIG_FILE_NAME, user_config_path
 
 app = typer.Typer(help="Convert Obsidian flashcard notes into Anki cards.", no_args_is_help=True,
-                  add_completion=False, rich_markup_mode="rich", pretty_exceptions_enable=False)
+                  add_completion=True, rich_markup_mode="rich", pretty_exceptions_enable=False)
 
 
 def _version(value: bool) -> None:
@@ -42,15 +42,49 @@ def main_options(
     ui.trace(f"start: command={ctx.invoked_subcommand} cwd={Path.cwd()}")
 
 
-app.command("init", help="Create the config interactively (refuses to overwrite an existing one).")(init.run)
-app.command("config", help="Show which config is in use and its contents.")(inspect.config)
-app.command("check", help="Parse every note and report problems; changes nothing.")(inspect.check)
-app.command("status", help="Per course: cards total / added / pending.")(inspect.status)
-app.command("sync", help="Export pending cards and mark them as added.")(sync.run)
-app.command("unflag", help="Remove ADDED flags so cards are exported again as new cards.")(unflag.run)
-app.command("orphans", help="Detect, suspend, or delete cards in Anki whose source notes were removed from vault.")(orphans.run)
-app.command("templates", help="Compare the local card templates with the note types in Anki and push them "
-                              "(AnkiConnect).")(templates.run)
+# Core Workflow
+app.command(
+    "status",
+    rich_help_panel="Core Workflow",
+    help="Show cards overview per course and run vault health check.",
+)(inspect.status)
+app.command(
+    "sync",
+    rich_help_panel="Core Workflow",
+    help="Export new or updated cards to Anki and flag them in the vault.",
+)(sync.run)
+
+# Setup & Configuration
+app.command(
+    "init",
+    rich_help_panel="Setup & Configuration",
+    help="Interactive wizard to create m2a.toml.",
+)(init.run)
+app.command(
+    "config",
+    rich_help_panel="Setup & Configuration",
+    help="Inspect, validate, or edit the active configuration.",
+)(inspect.config)
+app.command(
+    "templates",
+    rich_help_panel="Setup & Configuration",
+    help="Compare local card templates with Anki note types and push them.",
+)(templates.run)
+
+# Maintenance & Cleanup
+app.command(
+    "orphans",
+    rich_help_panel="Maintenance & Cleanup",
+    help="Detect and resolve drift between Obsidian vault and Anki.",
+)(orphans.run)
+app.command(
+    "unflag",
+    rich_help_panel="Maintenance & Cleanup",
+    help="Remove ADDED/DELETED flags so cards are exported again as new.",
+)(unflag.run)
+
+# Backward-compatible hidden alias
+app.command("check", hidden=True)(inspect.check)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -74,6 +108,8 @@ def main(argv: list[str] | None = None) -> int:
         ui.console.print()
         ui.console.print("[dim]aborted - nothing written[/]")
         return 130
+    except BrokenPipeError:
+        return 0
 
 
 if __name__ == "__main__":  # pragma: no cover

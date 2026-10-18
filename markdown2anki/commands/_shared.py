@@ -13,8 +13,18 @@ from ..parser import LEVEL_ERROR, LEVEL_INFO, LEVEL_WARNING, Card, Diagnostic
 from ..ui import console, escape
 
 INDENT = "  "
-COURSE_OPTION = typer.Option(None, "--course", help="Only this course (folder name or tag; glob or substring).")
-YES_OPTION = typer.Option(False, "-y", "--yes", help="Do not ask for confirmation.")
+COURSE_OPTION = typer.Option(
+    None, "--course",
+    help="Filter by course (folder name or tag; glob or substring).",
+)
+YES_OPTION = typer.Option(
+    False, "-y", "--yes",
+    help="Skip confirmation prompts.",
+)
+DRY_RUN_OPTION = typer.Option(
+    False, "-n", "--dry-run",
+    help="Show what would change without modifying files or Anki.",
+)
 
 
 @dataclass
@@ -63,23 +73,29 @@ def print_diagnostics(diagnostics: Sequence[Diagnostic], cfg: Config, indent: st
     return errors
 
 
-def summary_line(diagnostics: Sequence[Diagnostic]) -> str:
+def summary_line(diagnostics: Sequence[Diagnostic], skipped_count: int = 0) -> str:
     errors = sum(d.level == LEVEL_ERROR for d in diagnostics)
     warnings = sum(d.level == LEVEL_WARNING for d in diagnostics)
     if not errors and not warnings:
-        return "[green]✓ no problems[/]"
-    parts = []
-    if errors:
-        parts.append(f"[red]{_count(errors, 'error')}[/]")
-    if warnings:
-        parts.append(f"[yellow]{_count(warnings, 'warning')}[/]")
-    return "✗ " + ", ".join(parts)
+        return "[green]✓ Vault healthy[/] [dim]· 0 errors, 0 warnings[/]"
+    parts = [
+        f"[red]{_count(errors, 'error')}[/]" if errors else "[dim]0 errors[/]",
+        f"[yellow]{_count(warnings, 'warning')}[/]" if warnings else "[dim]0 warnings[/]",
+    ]
+    suffix = f" [dim]({_count(skipped_count, 'card')} would be skipped during sync)[/]" if skipped_count else ""
+    prefix = "[red]✗[/]" if errors else "[yellow]![/]"
+    return f"{prefix} " + ", ".join(parts) + suffix
 
 
-def print_problems(diagnostics: Sequence[Diagnostic], cfg: Config, include_info: bool = False) -> int:
+def print_problems(
+    diagnostics: Sequence[Diagnostic],
+    cfg: Config,
+    include_info: bool = False,
+    skipped_count: int = 0,
+) -> int:
     """Summary line plus one line per diagnostic; returns the number of errors."""
     problems = [d for d in diagnostics if d.level != LEVEL_INFO]
-    console.print(INDENT + summary_line(problems))
+    console.print(INDENT + summary_line(problems, skipped_count=skipped_count))
     errors = print_diagnostics(problems, cfg)
     if include_info:
         print_diagnostics([d for d in diagnostics if d.level == LEVEL_INFO], cfg)
