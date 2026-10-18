@@ -193,10 +193,13 @@ def config(
         console.print()
         console.print(ui.table(["folder", "tag alias"], [[escape(k), escape(v)] for k, v in sorted(cfg.tag_aliases.items())]))
 
-    if cfg.source and cfg.source.is_file():
-        console.print()
-        for line in cfg.source.read_text(encoding="utf-8").splitlines():
-            console.print(f"[dim]{escape(line)}[/]" if line.strip().startswith("#") else escape(line))
+    console.print()
+    console.print(
+        "  [dim]Quick options:[/] [cyan]--edit[/] [dim](edit in $EDITOR)[/]  [dim]·[/]  "
+        "[cyan]--validate[/] [dim](verify config & connection)[/]  [dim]·[/]  "
+        "[cyan]--raw[/] [dim](view TOML)[/]  [dim]·[/]  "
+        "[cyan]--path[/] [dim](print file path)[/]"
+    )
     return 0
 
 
@@ -242,20 +245,20 @@ def status(
 
     header_target = rel(target_file, cfg) if target_file else str(cfg.vault)
     ui.header("m2a status", header_target)
-    kv_items: list[tuple[str, int]] = [
-        ("notes", len(collected.sources)),
-        ("cards", len(active_cards)),
-        ("pending", len(collected.pending)),
-        ("added", len(collected.added)),
+    kv_items: list[tuple[str, int]] = [\
+        ("notes", len(collected.sources)),\
+        ("cards", len(active_cards)),\
+        ("pending", len(collected.pending)),\
+        ("added", len(collected.added)),\
     ]
     if deleted_cards:
         kv_items.append(("deleted", len(deleted_cards)))
     console.print(INDENT + ui.kv(kv_items))
     console.print()
 
-    rows = [
-        [escape(group), str(total), str(added), f"[green]{pending}[/]" if pending else "[dim]0[/]"]
-        for group, (total, added, pending) in sorted(counts.items())
+    rows = [\
+        [escape(group), str(total), str(added), f"[green]{pending}[/]" if pending else "[dim]0[/]"]\
+        for group, (total, added, pending) in sorted(counts.items())\
     ]
     if rows:
         console.print(ui.table(["group", "cards", "added", "new"], rows, align_right=(1, 2, 3)))

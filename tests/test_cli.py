@@ -616,6 +616,11 @@ def test_config_dashboard(vault, capsys):
     assert "vault" in out
     assert "target" in out
     assert "apkg" in out
+    assert "Quick options:" in out
+    assert "--edit" in out
+    assert "--validate" in out
+    assert "--raw" in out
+    assert "--path" in out
 
 
 def test_config_flags_path_raw_and_exclusivity(vault, capsys):
