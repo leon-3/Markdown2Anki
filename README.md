@@ -173,14 +173,14 @@ ignore = [".git", ".obsidian", "templates", "archive/*", "ai"]
 
 # Deck routing rules (longest-prefix match)
 [deck_routing]
-"everyday" = "01. everyday (focus)"
-"everyday/work" = "01. everyday (focus)::02. work"
-"pen and paper" = "02. pen and paper (work)"
+"courses" = "01. University"
+"courses/cs101" = "01. University::CS101"
+"work" = "02. Professional"
 
 # Tag path aliases (map folder paths to custom tags, or "" to omit)
 [tag_aliases]
-"everyday" = "01_everyday"
-"pen and paper" = "02_pen_and_paper"
+"courses" = "01_uni"
+"work" = "02_work"
 "templates" = ""  # suppresses tag generation for this folder level
 ```
 
