@@ -43,7 +43,7 @@ def vault(tmp_path):
         base_tag="SUTD",
         output_dir=tmp_path / "out",
         target="apkg",
-        ignore=[".git", ".obsidian", "Archive", "templates", "Unknown"],
+        ignore=[".git", ".obsidian", "Archive", "Unknown"],
     )
     cfg_path = tmp_path / "m2a.toml"
     cfg_path.write_text(render_toml(cfg), encoding="utf-8")
@@ -57,7 +57,7 @@ def run(*argv):
 def test_config_roundtrip(vault):
     v, cfg_path = vault
     cfg = load_config(cfg_path)
-    assert cfg.vault == v and cfg.base_tag == "SUTD" and cfg.ignore == [".git", ".obsidian", "Archive", "templates", "Unknown"]
+    assert cfg.vault == v and cfg.base_tag == "SUTD" and cfg.ignore == [".git", ".obsidian", "Archive", "Unknown"]
     assert cfg.subject_tag("50.054 Compiler") == "50.054_Compiler"
     assert cfg.subject_tag("Archive") is None
 
@@ -933,7 +933,7 @@ def test_config_validate(vault, capsys, tmp_path):
 
 
 def test_help_epilogs_present(capsys):
-    for cmd in ("status", "sync", "init", "config", "templates", "orphans", "unflag"):
+    for cmd in ("status", "sync", "init", "config", "orphans", "unflag"):
         assert run(cmd, "--help") == 0
         out = capsys.readouterr().out
         assert "Examples:" in out

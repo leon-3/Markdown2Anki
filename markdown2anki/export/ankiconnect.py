@@ -143,44 +143,6 @@ def resolve_model_names(
     return {kind: by_id.get(model_id, fallback[setting]) for kind, model_id, setting in MODEL_KINDS}
 
 
-@dataclass
-class TemplateStatus:
-    kind: str
-    name: str  # note type name in Anki
-    card_name: str  # name of its (single) card template
-    local: Template
-    changed: list[str] = field(default_factory=list)  # subset of front / back / styling
-
-    @property
-    def up_to_date(self) -> bool:
-        return not self.changed
-
-
-def template_status(client: AnkiConnect, cfg: Config) -> list[TemplateStatus]:
-    """Compare the local templates with the note types that exist in Anki."""
-    existing = set(client.invoke("modelNamesAndIds"))
-    out = []
-    for kind, name in resolve_model_names(client, cfg).items():
-        if name not in existing:
-            continue
-        local = load_template(kind, cfg.display, cfg.templates_dir)
-        card_name, remote = next(iter(client.invoke("modelTemplates", modelName=name).items()))
-        remote_css = client.invoke("modelStyling", modelName=name)["css"]
-        changed = [label for label, mine, theirs in (("front", local.qfmt, remote.get("Front", "")),
-                                                    ("back", local.afmt, remote.get("Back", "")),
-                                                    ("styling", local.css, remote_css))
-                   if mine.strip() != theirs.strip()]
-        out.append(TemplateStatus(kind, name, card_name, local, changed))
-    return out
-
-
-def push_template(client: AnkiConnect, status: TemplateStatus) -> None:
-    """Overwrite one note type's card template and styling in Anki with the local version."""
-    client.invoke("updateModelTemplates", model={"name": status.name, "templates": {
-        status.card_name: {"Front": status.local.qfmt, "Back": status.local.afmt}}})
-    client.invoke("updateModelStyling", model={"name": status.name, "css": status.local.css})
-
-
 # --- sync -----------------------------------------------------------------------------------------
 
 
@@ -571,7 +533,8 @@ def export_ankiconnect(
                 export.added_text_cloze += 1
             else:
                 export.added_basic += 1
-            if (note.model == MODEL_IMAGE_OCCLUSION and suspend_new_occlusions) or                (note.model == MODEL_CLOZE and suspend_new_clozes):
+            if (note.model == MODEL_IMAGE_OCCLUSION and suspend_new_occlusions) or \
+               (note.model == MODEL_CLOZE and suspend_new_clozes):
                 notes_to_suspend.append(note_id)
 
         if notes_to_suspend:

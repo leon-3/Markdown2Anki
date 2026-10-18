@@ -5,7 +5,6 @@ import pytest
 from markdown2anki.build import BuildResult, RenderedNote
 from markdown2anki.config import Config
 from markdown2anki.export import ankiconnect
-from markdown2anki.models import load_template
 from markdown2anki.parser import Card
 
 
@@ -140,29 +139,6 @@ def test_media_is_only_uploaded_for_notes_that_go_through(anki, tmp_path):
     note.media = [image]
     ankiconnect.export_ankiconnect(BuildResult(notes=[note]), Config(vault=Path("."), deck="D"), [])
     assert not fake.params("storeMediaFile")
-
-
-def test_template_status_and_push(anki):
-    local = load_template("Basic", {"50.054_Compiler": "Compiler"})
-    fake = anki({"Basic": ankiconnect.BASIC_MODEL_ID})
-    base = fake.invoke
-
-    def invoke(action, **params):
-        if action == "modelTemplates":
-            return {"Card 1": {"Front": "OLD FRONT", "Back": local.afmt}}
-        if action == "modelStyling":
-            return {"css": local.css}
-        return base(action, **params)
-    fake.invoke = invoke
-
-    cfg = Config(vault=Path("."))
-    client = ankiconnect.AnkiConnect(cfg.anki_connect_url)
-    statuses = ankiconnect.template_status(client, cfg)
-    assert [s.name for s in statuses] == ["Basic"] and statuses[0].changed == ["front"]
-    ankiconnect.push_template(client, statuses[0])
-    update = fake.params("updateModelTemplates")[0]["model"]
-    assert update["name"] == "Basic" and update["templates"]['Card 1']["Front"] == local.qfmt
-    assert fake.params("updateModelStyling")
 
 
 def test_ankiconnect_removes_stale_tags_on_update(anki):
