@@ -315,7 +315,10 @@ def export_ankiconnect(
             continue
         card_id = note.card.card_id
         if is_anki_note_id(card_id):
-            to_update.append((note, new_card_id(), anki_note_id(card_id)))
+            if recreate_missing:
+                to_add.append((note, new_card_id()))
+            else:
+                to_update.append((note, new_card_id(), anki_note_id(card_id)))
             continue
         kind = _model_kind(note.model)
         if note.model == MODEL_IMAGE_OCCLUSION:
@@ -349,7 +352,7 @@ def export_ankiconnect(
                         diag_list.append(Diagnostic(
                             note.card.file, note.card.line, LEVEL_WARNING,
                             "not found in Anki (deleted, other profile, or exported before ids "
-                            "were embedded) - `m2a sync --recreate-missing` to add it again, or `--mark-deleted` to mark in vault; skipped",
+                            "were embedded) - run `m2a orphans --recreate` to add it again, or `m2a orphans --mark-deleted` to mark in vault; skipped",
                         ))
                         result.skipped.append(note.card)
 

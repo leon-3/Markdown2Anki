@@ -1,56 +1,105 @@
-"""``m2a orphans``: inspect and manage cards in Anki whose source notes were removed from vault."""
+"""``m2a orphans``: inspect and resolve drift between vault notes and Anki."""
 from __future__ import annotations
 
+import fnmatch
 import re
+from pathlib import Path
 import typer
 
 from .. import ui
-from ..export.ankiconnect import AnkiConnect, AnkiConnectError, resolve_model_names
+from ..build import build
+from ..config import Config
+from ..export.ankiconnect import AnkiConnect, AnkiConnectError, export_ankiconnect, resolve_model_names
+from ..flags import write_deleted_flags, write_flags
+from ..ids import is_anki_note_id, new_card_id
+from ..occlusions import export_occlusions
+from ..parser import Card
 from ..ui import console, escape
 from ..vault import collect
-from ._shared import COURSE_OPTION, YES_OPTION, load, rel, short_question
+from ._shared import COURSE_OPTION, DRY_RUN_OPTION, YES_OPTION, load, print_diagnostics, rel, short_question
 
 M2A_MARKER_RE = re.compile(r"<!--m2a:([0-9a-z]{4,12})-->")
+
+
+def _course_tag_prefixes(cfg: Config, course: str, matched_cards: list[Card], matched_sources: list) -> set[str]:
+    """Build case-insensitive Anki tag prefixes that belong to the filtered course."""
+    prefixes: set[str] = set()
+    for c in matched_cards:
+        if c.tag:
+            prefixes.add(c.tag.lower())
+    for src in matched_sources:
+        top_folder = src.group.split("/")[0].strip()
+        subj = cfg.subject_tag(top_folder)
+        if subj:
+            full = f"{cfg.base_tag}::{subj}" if cfg.base_tag else subj
+            prefixes.add(full.lower())
+    subj_direct = cfg.subject_tag(course)
+    if subj_direct:
+        full = f"{cfg.base_tag}::{subj_direct}" if cfg.base_tag else subj_direct
+        prefixes.add(full.lower())
+    return prefixes
+
+
+def _note_matches_course(info: dict, course: str, prefixes: set[str]) -> bool:
+    tags = [str(t).lower() for t in (info.get("tags") or [])]
+    q = course.lower().replace(" ", "_")
+    q_raw = course.lower()
+    for t in tags:
+        if any(t == p or t.startswith(p + "::") for p in prefixes):
+            return True
+        if fnmatch.fnmatch(t, f"*{q}*") or q in t or fnmatch.fnmatch(t, f"*{q_raw}*") or q_raw in t:
+            return True
+    return False
 
 
 def run(
     ctx: typer.Context,
     course: str | None = COURSE_OPTION,
-    suspend: bool = typer.Option(False, "--suspend", help="Suspend all orphaned cards in Anki to preserve learning history without active reviews."),
-    delete: bool = typer.Option(False, "--delete", help="Permanently delete orphaned notes from Anki database."),
+    suspend: bool = typer.Option(False, "--suspend", help="Suspend orphaned cards in Anki to preserve review history (Section 1)."),
+    delete: bool = typer.Option(False, "--delete", help="Permanently delete orphaned notes from Anki (Section 1)."),
+    mark_deleted: bool = typer.Option(False, "--mark-deleted", help="Mark cards missing in Anki as DELETED in vault notes (Section 2)."),
+    recreate: bool = typer.Option(False, "--recreate", help="Re-export cards missing in Anki back into Anki (Section 2)."),
+    dry_run: bool = DRY_RUN_OPTION,
     yes: bool = YES_OPTION,
 ) -> int:
+    if suspend and delete:
+        ui.error("cannot combine --suspend and --delete")
+        return 2
+    if mark_deleted and recreate:
+        ui.error("cannot combine --mark-deleted and --recreate")
+        return 2
+
     cfg = load(ctx)
     client = AnkiConnect(cfg.anki_connect_url)
     try:
         if not client.reachable():
             ui.error(f"cannot reach AnkiConnect at {cfg.anki_connect_url} - is Anki running?")
             return 2
+
+        # Always collect all vault cards first so cards from other courses are never treated as orphans
+        all_collected = collect(cfg, None, trace_fn=ui.trace)
+        all_vault_cids: set[str] = {c.card_id for c in all_collected.cards if c.card_id and not c.deleted}
+
+        collected = collect(cfg, course, trace_fn=ui.trace) if course else all_collected
+        course_prefixes = _course_tag_prefixes(cfg, course, collected.cards, collected.sources) if course else set()
+
+        model_names = list(resolve_model_names(client, cfg).values())
+        for io_name in ("Image Occlusion", "Image Occlusion Enhanced"):
+            if io_name not in model_names:
+                model_names.append(io_name)
+        model_query = " or ".join([f'note:"{name}"' for name in model_names])
+        note_ids = client.invoke("findNotes", query=model_query) or []
+        notes_info = client.notes_info(note_ids) if note_ids else []
     except AnkiConnectError as exc:
         ui.error(str(exc))
         return 2
 
-    # 1. Collect all active card IDs currently present in vault (ignore cards marked as DELETED:)
-    collected = collect(cfg, course, trace_fn=ui.trace)
-    vault_card_ids: set[str] = {c.card_id for c in collected.cards if c.card_id and not c.deleted}
-
-    # 2. Query Anki for notes under M2A models (including Image Occlusion)
-    model_names = list(resolve_model_names(client, cfg).values())
-    for io_name in ("Image Occlusion", "Image Occlusion Enhanced"):
-        if io_name not in model_names:
-            model_names.append(io_name)
-    model_query = " or ".join([f'note:"{name}"' for name in model_names])
-    note_ids = client.invoke("findNotes", query=model_query) or []
-    if not note_ids:
-        ui.header("m2a orphans", str(cfg.vault))
-        console.print("  [dim]No notes found under M2A models in Anki.[/]")
-        return 0
-
-    notes_info = client.notes_info(note_ids)
     orphaned_notes: list[dict] = []
     anki_cids: set[str] = set()
 
     for info in notes_info:
+        if not isinstance(info, dict):
+            continue
         nid = info.get("noteId")
         if not nid:
             continue
@@ -62,7 +111,9 @@ def run(
                 cid = m.group(1)
                 anki_cids.add(cid)
                 break
-        if cid and cid not in vault_card_ids:
+        if cid and cid not in all_vault_cids:
+            if course and not _note_matches_course(info, course, course_prefixes):
+                continue
             preview = ""
             for fname in ("Front", "Text", "Header", "Image", "Occlusion", "Comments"):
                 if fname in info.get("fields", {}):
@@ -73,7 +124,7 @@ def run(
                         preview = cleaned
                         break
             if not preview:
-                preview = f"[{info.get('modelName', 'Card')}]" 
+                preview = f"[{info.get('modelName', 'Card')}]"
             orphaned_notes.append({
                 "note_id": nid,
                 "card_id": cid,
@@ -88,17 +139,17 @@ def run(
     if orphaned_notes:
         summary_parts.append(f"{len(orphaned_notes)} orphaned in Anki")
     if missing_in_anki:
-        summary_parts.append(f"{len(missing_in_anki)} deleted in Anki")
+        summary_parts.append(f"{len(missing_in_anki)} missing in Anki")
     summary_text = ", ".join(summary_parts) if summary_parts else "0 issues detected"
 
     ui.header("m2a orphans", summary_text)
 
     if not orphaned_notes and not missing_in_anki:
-        console.print("  [green]✓[/] All cards in sync: zero orphaned in Anki, and zero deleted in vault.")
+        console.print("  [green]✓[/] All cards in sync: 0 orphaned in Anki, 0 missing in Anki.")
         return 0
 
     if orphaned_notes:
-        console.print(f"  [bold]Section 1: Orphaned Cards in Anki (Deleted from Obsidian):[/] {len(orphaned_notes)} note(s)")
+        console.print(f"  [bold]Section 1: Orphaned in Anki (Removed from Vault):[/] {len(orphaned_notes)} note(s)")
         rows = []
         for o in orphaned_notes:
             clean_preview = re.sub(r"<[^>]+>", "", o["preview"]).replace("\n", " ").strip()
@@ -106,40 +157,128 @@ def run(
                 clean_preview = f"[{o['model']}]"
             elif len(clean_preview) > 55:
                 clean_preview = clean_preview[:52] + "..."
-            rows.append([f"[dim]{o['card_id']}[/]", str(o["note_id"]), o["model"], escape(clean_preview)])
+            rows.append([f"[dim]{escape(o['card_id'])}[/]", str(o["note_id"]), escape(o["model"]), escape(clean_preview)])
         console.print(ui.table(["id", "note id", "model", "question"], rows))
         console.print()
 
     if missing_in_anki:
-        console.print(f"  [bold]Section 2: Cards Deleted in Anki (Still Active in Obsidian):[/] {len(missing_in_anki)} card(s)")
-        missing_rows = []
-        for c in missing_in_anki:
-            q_text = short_question(c)
-            missing_rows.append([f"[dim]{c.card_id}[/]", escape(f"{rel(c.file, cfg)}:{c.line}"), escape(q_text)])
+        console.print(f"  [bold]Section 2: Cards Deleted in Anki / Missing (Still Marked ADDED in Vault):[/] {len(missing_in_anki)} card(s)")
+        missing_rows = [
+            [f"[dim]{escape(c.card_id or '')}[/]", escape(f"{rel(c.file, cfg)}:{c.line}"), escape(short_question(c))]
+            for c in missing_in_anki
+        ]
         console.print(ui.table(["id", "where", "question"], missing_rows))
         console.print()
 
+    if dry_run:
+        if suspend and orphaned_notes:
+            card_ids_to_suspend = [cid for o in orphaned_notes for cid in o["cards"]]
+            console.print(f"  [dim]dry run - would suspend {len(card_ids_to_suspend)} card(s)[/]")
+        if delete and orphaned_notes:
+            console.print(f"  [dim]dry run - would delete {len(orphaned_notes)} orphaned note(s) in Anki[/]")
+        if mark_deleted and missing_in_anki:
+            files = {c.file for c in missing_in_anki}
+            console.print(f"  [dim]dry run - would mark {len(missing_in_anki)} card(s) as DELETED in {len(files)} note(s)[/]")
+        if recreate and missing_in_anki:
+            console.print(f"  [dim]dry run - would recreate {len(missing_in_anki)} card(s) in Anki[/]")
+        if not any((suspend, delete, mark_deleted, recreate)):
+            console.print("  [dim]dry run - nothing modified[/]")
+        return 0
+
+    acted = False
+
+    # Section 1 Actions
     if suspend:
+        acted = True
         card_ids_to_suspend = [cid for o in orphaned_notes for cid in o["cards"]]
         if card_ids_to_suspend:
-            client.invoke("suspend", cards=card_ids_to_suspend)
+            try:
+                client.invoke("suspend", cards=card_ids_to_suspend)
+            except AnkiConnectError as exc:
+                ui.error(str(exc))
+                return 2
             console.print(f"  [green]✓[/] Suspended [bold]{len(card_ids_to_suspend)}[/] card(s) belonging to [bold]{len(orphaned_notes)}[/] orphaned note(s).")
-        return 0
 
-    if delete:
-        if not yes and not ui.confirm(f"Permanently delete {len(orphaned_notes)} orphaned note(s) from Anki?"):
-            console.print("  [dim]aborted - nothing deleted[/]")
-            return 0
-        nids_to_delete = [o["note_id"] for o in orphaned_notes]
-        client.invoke("deleteNotes", notes=nids_to_delete)
-        console.print(f"  [green]✓[/] Permanently deleted [bold]{len(nids_to_delete)}[/] orphaned note(s) from Anki.")
-        return 0
+    elif delete:
+        acted = True
+        if orphaned_notes:
+            if not yes and not ui.confirm(f"Permanently delete {len(orphaned_notes)} orphaned note(s) from Anki?"):
+                console.print("  [dim]aborted - nothing deleted in Anki[/]")
+            else:
+                nids_to_delete = [o["note_id"] for o in orphaned_notes]
+                try:
+                    client.invoke("deleteNotes", notes=nids_to_delete)
+                except AnkiConnectError as exc:
+                    ui.error(str(exc))
+                    return 2
+                console.print(f"  [green]✓[/] Permanently deleted [bold]{len(nids_to_delete)}[/] orphaned note(s) from Anki.")
 
-    hint_parts = []
-    if orphaned_notes:
-        hint_parts.append("`m2a orphans --suspend` or `m2a orphans --delete` for orphaned Anki cards")
-    if missing_in_anki:
-        hint_parts.append("`m2a sync --mark-deleted` (to mark DELETED in vault) or `m2a sync --update --recreate-missing` (to recreate in Anki)")
-    if hint_parts:
-        console.print("  [dim]Run " + " | ".join(hint_parts) + "[/]")
+    # Section 2 Actions
+    if mark_deleted:
+        acted = True
+        if missing_in_anki:
+            files = {c.file for c in missing_in_anki}
+            if not yes and not ui.confirm(f"Mark {len(missing_in_anki)} missing card(s) in {len(files)} note(s) as DELETED?"):
+                console.print("  [dim]aborted - nothing marked in vault[/]")
+            else:
+                try:
+                    flagged, problems = write_deleted_flags(missing_in_anki)
+                except OSError as exc:
+                    ui.error(f"failed to mark cards as deleted: {exc}")
+                    return 1
+                console.print(f"  [green]✓[/] Marked [bold]{flagged}[/] card(s) as DELETED in {len(files)} note(s).")
+                if problems:
+                    for problem in problems:
+                        console.print(f"  [yellow]![/] {escape(problem)}")
+                    return 1
+
+    elif recreate:
+        acted = True
+        if missing_in_anki:
+            if not yes and not ui.confirm(f"Re-export {len(missing_in_anki)} missing card(s) to Anki?"):
+                console.print("  [dim]aborted - nothing recreated[/]")
+            else:
+                # Normalize legacy numeric Anki IDs so export_ankiconnect treats them as recreatable
+                for c in missing_in_anki:
+                    if is_anki_note_id(c.card_id):
+                        c.card_id = new_card_id()
+                seen = len(collected.diagnostics)
+                res = build(
+                    missing_in_anki,
+                    collected.diagnostics,
+                    cfg.cloze_notes,
+                    vault_root=cfg.vault,
+                    hash_media=cfg.hash_media,
+                    image_occlusion_mode=cfg.image_occlusion_mode,
+                )
+                try:
+                    export = export_ankiconnect(res, cfg, collected.diagnostics, recreate_missing=True)
+                except AnkiConnectError as exc:
+                    ui.error(str(exc))
+                    return 2
+                if res.occlusions:
+                    occ_dir, occ_flags, _ = export_occlusions(res.occlusions, cfg.output_dir)
+                    export.flags.extend(occ_flags)
+                    console.print(f"  [green]✓[/] Staged [bold]{len(res.occlusions)}[/] image occlusion(s) to [bold]{escape(str(occ_dir))}[/].")
+                print_diagnostics(collected.diagnostics[seen:], cfg)
+                # Only write flags if any card ID actually changed (e.g. migrated legacy ID)
+                changed_flags = [(card, cid) for card, cid in export.flags if card.card_id != cid]
+                if changed_flags:
+                    try:
+                        _, problems = write_flags(changed_flags)
+                    except OSError as exc:
+                        ui.error(f"failed to update flags in vault: {exc}")
+                        return 1
+                    if problems:
+                        for problem in problems:
+                            console.print(f"  [yellow]![/] {escape(problem)}")
+                        return 1
+                console.print(f"  [green]✓[/] Recreated [bold]{export.added}[/] card(s) in deck [bold]{escape(cfg.deck)}[/].")
+
+    if not acted:
+        console.print("  [bold]To resolve:[/]")
+        if orphaned_notes and not (delete or suspend):
+            console.print("    • Anki orphans:  [cyan]m2a orphans --delete[/]  (or [cyan]--suspend[/])")
+        if missing_in_anki and not (mark_deleted or recreate):
+            console.print("    • Missing cards: [cyan]m2a orphans --mark-deleted[/]  (or [cyan]--recreate[/])")
     return 0

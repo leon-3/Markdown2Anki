@@ -689,3 +689,153 @@ def test_config_edit_interactive_and_validation(vault, monkeypatch, capsys):
     monkeypatch.setattr(inspect_mod, "click_edit", broken_editor_edit)
     assert run("-c", cfg_path, "config", "--edit") == 2
     assert "could not launch editor" in capsys.readouterr().err
+
+
+def test_orphans_empty_anki_still_detects_missing_in_vault(vault, monkeypatch, capsys):
+    from markdown2anki.export import ankiconnect
+
+    class EmptyAnki:
+        def __init__(self):
+            self.calls = []
+        def invoke(self, action, **params):
+            self.calls.append((action, params))
+            if action == "findNotes":
+                return []
+            if action == "modelNamesAndIds":
+                return {"M2A Basic": 1}
+            return None
+
+    fake = EmptyAnki()
+    monkeypatch.setattr(ankiconnect.AnkiConnect, "invoke", lambda self, action, **p: fake.invoke(action, **p))
+    monkeypatch.setattr(ankiconnect.AnkiConnect, "reachable", lambda self: True)
+
+    v, cfg_path = vault
+    note = v / "50.054 Compiler" / "Anki - Lectures" / "W01 Intro.md"
+    content = note.read_text(encoding="utf-8") + "\n---\nADDED: Solitary Q %%solo123%%\nSolitary A\n"
+    note.write_text(content, encoding="utf-8")
+
+    # Should detect 1 missing card in Anki without early exit
+    assert run("-c", cfg_path, "orphans") == 0
+    out = capsys.readouterr().out
+    assert "solo123" in out
+    assert "Section 2" in out
+
+    # Test marking it DELETED
+    assert run("-c", cfg_path, "orphans", "--mark-deleted", "--yes") == 0
+    assert "DELETED: Solitary Q %%solo123%%" in note.read_text(encoding="utf-8")
+
+
+def test_orphans_course_filter_does_not_flag_other_courses(vault, monkeypatch, capsys):
+    from markdown2anki.export import ankiconnect
+
+    v, cfg_path = vault
+    # Course 1 has card with ID act101
+    note1 = v / "50.054 Compiler" / "Anki - Lectures" / "W01 Intro.md"
+    note1.write_text(note1.read_text(encoding="utf-8") + "\n---\nADDED: Compiler Q %%act101%%\nCompiler A\n", encoding="utf-8")
+
+    # Course 2 has card with ID net202
+    (v / "50.020 NetSec" / "Anki - Lectures").mkdir(parents=True)
+    note2 = v / "50.020 NetSec" / "Anki - Lectures" / "W01 Intro.md"
+    note2.write_text("---\nADDED: Security Q %%net202%%\nSecurity A\n", encoding="utf-8")
+
+    class MultiCourseAnki:
+        def invoke(self, action, **params):
+            if action == "modelNamesAndIds":
+                return {"M2A Basic": 1}
+            if action == "findNotes":
+                return [101, 202]
+            if action == "notesInfo":
+                return [
+                    {
+                        "noteId": 101,
+                        "modelName": "M2A Basic",
+                        "tags": ["SUTD::50.054_Compiler"],
+                        "fields": {"Front": {"value": "Compiler Q"}, "Back": {"value": "Compiler A<!--m2a:act101-->"}},
+                        "cards": [1001],
+                    },
+                    {
+                        "noteId": 202,
+                        "modelName": "M2A Basic",
+                        "tags": ["SUTD::50.020_NetSec"],
+                        "fields": {"Front": {"value": "Security Q"}, "Back": {"value": "Security A<!--m2a:net202-->"}},
+                        "cards": [1002],
+                    },
+                ]
+            return None
+
+    monkeypatch.setattr(ankiconnect.AnkiConnect, "invoke", lambda self, action, **p: MultiCourseAnki().invoke(action, **p))
+    monkeypatch.setattr(ankiconnect.AnkiConnect, "reachable", lambda self: True)
+
+    # When filtering by course "50.054 Compiler", net202 must NOT be treated as an orphan!
+    assert run("-c", cfg_path, "orphans", "--course", "50.054 Compiler") == 0
+    out = capsys.readouterr().out
+    assert "0 orphaned in Anki" in out
+    assert "net202" not in out
+
+
+def test_orphans_mutually_exclusive_and_combined_flags(vault, monkeypatch, capsys):
+    from markdown2anki.export import ankiconnect
+
+    monkeypatch.setattr(ankiconnect.AnkiConnect, "reachable", lambda self: True)
+    v, cfg_path = vault
+
+    # Mutually exclusive flags
+    assert run("-c", cfg_path, "orphans", "--delete", "--suspend") == 2
+    assert "cannot combine --suspend and --delete" in capsys.readouterr().err
+
+    assert run("-c", cfg_path, "orphans", "--mark-deleted", "--recreate") == 2
+    assert "cannot combine --mark-deleted and --recreate" in capsys.readouterr().err
+
+
+def test_orphans_dry_run_and_recreate_flow(vault, monkeypatch, capsys):
+    from markdown2anki.export import ankiconnect
+
+    v, cfg_path = vault
+    note = v / "50.054 Compiler" / "Anki - Lectures" / "W01 Intro.md"
+    note.write_text(note.read_text(encoding="utf-8") + "\n---\nADDED: Recreate Q %%rec888%%\nRecreate A\n", encoding="utf-8")
+
+    class RecreateAnki:
+        def __init__(self):
+            self.calls = []
+        def invoke(self, action, **params):
+            self.calls.append((action, params))
+            if action == "findNotes":
+                q = params.get("query", "")
+                if "rec888" in q:
+                    return []
+                return [999]  # Initial model search finds orphan 999
+            if action == "notesInfo":
+                return [{
+                    "noteId": 999,
+                    "modelName": "M2A Basic",
+                    "tags": ["SUTD::50.054_Compiler"],
+                    "fields": {"Front": {"value": "Gone Q"}, "Back": {"value": "Gone A<!--m2a:gone000-->"}},
+                    "cards": [1999],
+                }]
+            if action == "modelNamesAndIds":
+                return {"M2A Basic": 1, "M2A Cloze": 2}
+            if action == "modelFieldNames":
+                return ["Front", "Back"]
+            if action == "addNotes":
+                return [8888]
+            if action == "deleteNotes":
+                return True
+            return None
+
+    fake = RecreateAnki()
+    monkeypatch.setattr(ankiconnect.AnkiConnect, "invoke", lambda self, action, **p: fake.invoke(action, **p))
+    monkeypatch.setattr(ankiconnect.AnkiConnect, "reachable", lambda self: True)
+
+    # 1. Dry run shows would-be changes
+    assert run("-c", cfg_path, "orphans", "--delete", "--recreate", "--dry-run") == 0
+    dry_out = capsys.readouterr().out
+    assert "dry run - would delete 1 orphaned note(s)" in dry_out
+    assert "dry run - would recreate 1 card(s)" in dry_out
+
+    # 2. Combined run: deletes Section 1 orphan AND recreates Section 2 missing card in single execution!
+    assert run("-c", cfg_path, "orphans", "--delete", "--recreate", "--yes") == 0
+    combined_out = capsys.readouterr().out
+    assert "Permanently deleted 1 orphaned note(s)" in combined_out
+    assert "Recreated 1 card(s)" in combined_out
+    assert any(a == "deleteNotes" and p.get("notes") == [999] for a, p in fake.calls)
+    assert any(a == "addNotes" for a, p in fake.calls)
