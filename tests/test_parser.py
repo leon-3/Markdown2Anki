@@ -100,7 +100,7 @@ def test_inline_code_not_detected_as_code():
     assert not cards[0].has_code
 
 
-def test_yaml_frontmatter_is_ignored_and_not_parsed_as_card(tmp_path):
+def test_leading_separator_with_metadata_parsed_as_regular_card(tmp_path):
     note = tmp_path / "note.md"
     note.write_text(
         "---\n"
@@ -115,11 +115,13 @@ def test_yaml_frontmatter_is_ignored_and_not_parsed_as_card(tmp_path):
         encoding="utf-8",
     )
     cards = parse_file(note, "Base")
-    assert len(cards) == 1
-    assert cards[0].question == "What is a sample space?"
-    assert cards[0].answer == "The set of all possible outcomes."
-    # Line 1: ---, 2: tags, 3: aliases, 4: date, 5: ---, 6: # ..., 7: ---, 8: Question
-    assert cards[0].line == 8
+    assert len(cards) == 2
+    assert cards[0].question == "tags: [math, probability]"
+    assert cards[0].answer == "aliases: [PT]\ndate: 2026-10-15"
+    assert cards[0].line == 2
+    assert cards[1].question == "What is a sample space?"
+    assert cards[1].answer == "The set of all possible outcomes."
+    assert cards[1].line == 8
 
 
 def test_file_without_frontmatter_works_normally(tmp_path):
@@ -264,31 +266,6 @@ def test_unclosed_code_fence_emits_warning():
     assert any(d.level == LEVEL_WARNING and "unclosed code fence" in d.message for d in diags)
 
 
-def test_yaml_frontmatter_with_comments_multiline_and_nested_lists(tmp_path):
-    note = tmp_path / "complex_fm.md"
-    content = (
-        "---\n"
-        "# This is an Obsidian note comment\n"
-        "title: 'Algorithms & Data Structures'\n"
-        "tags:\n"
-        "  - cs\n"
-        "  - algorithms\n"
-        "summary: |\n"
-        "  This is a multiline\n"
-        "  YAML summary text.\n"
-        "...\n"
-        "# Chapter 1\n"
-        "---\n"
-        "What is Big-O?\n"
-        "Asymptotic upper bound.\n"
-    )
-    note.write_text(content, encoding="utf-8")
-    cards = parse_file(note, "CS")
-    assert len(cards) == 1
-    assert cards[0].question == "What is Big-O?"
-    assert cards[0].answer == "Asymptotic upper bound."
-
-
 def test_mixed_line_endings_in_parse_file(tmp_path):
     note = tmp_path / "mixed.md"
     content = "---\r\nQuestion 1\nAnswer 1\r\n---\nQuestion 2\r\nAnswer 2\n"
@@ -376,4 +353,3 @@ def test_deleted_prefix_parsing_and_flagging(tmp_path):
     clean_cards = parse_file(note, "Base")
     assert clean_cards[0].deleted is False and clean_cards[0].added is False
     assert clean_cards[1].deleted is False and clean_cards[1].added is False
-

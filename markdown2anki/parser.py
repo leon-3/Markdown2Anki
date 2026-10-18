@@ -90,32 +90,6 @@ def parse_file(
     )
 
 
-def _find_frontmatter_end(lines: list[str]) -> int:
-    """Return the 1-based line number of the closing '---' of YAML frontmatter, or 0 if none."""
-    if not lines or lines[0].strip() != "---":
-        return 0
-    has_key_value = False
-    for i in range(1, len(lines)):
-        line = lines[i]
-        stripped = line.strip()
-        if stripped in ("---", "..."):
-            return i + 1 if has_key_value else 0
-        if not stripped:
-            continue
-        if stripped.startswith("#"):
-            continue
-        if stripped.startswith("- ") or stripped == "-":
-            has_key_value = True
-            continue
-        if line.startswith(" ") or line.startswith("\t"):
-            continue
-        if re.match(r"^['\"]?[a-zA-Z0-9_.-]+['\"]?\s*:", line):
-            has_key_value = True
-            continue
-        return 0
-    return 0
-
-
 def parse_lines(
     lines: list[str],
     file: Path,
@@ -165,12 +139,7 @@ def parse_lines(
             diagnostics.append(Diagnostic(file, first, LEVEL_ERROR, "text outside a card (no question line after '---')"))
         question, answer_lines, orphan_lines, added, deleted, card_id = None, [], [], False, False, None
 
-    frontmatter_end = _find_frontmatter_end(lines)
-
     for index, line in enumerate(lines, start=1):
-        if index <= frontmatter_end:
-            continue
-
         m_fence = OPEN_FENCE_RE.match(line)
         if m_fence:
             delim, info = m_fence.group(1), m_fence.group(2).strip()
