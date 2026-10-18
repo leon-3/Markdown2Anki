@@ -7,10 +7,30 @@ from rich import box
 from rich.panel import Panel
 from rich.syntax import Syntax
 
-try:
-    from typer._click import edit as click_edit
-except ImportError:
-    from click import edit as click_edit
+import os
+import shlex
+import subprocess
+
+def click_edit(filename: str, editor: str | None = None) -> None:
+    """Open the file at filename in a text editor."""
+    try:
+        import click
+        if hasattr(click, 'edit'):
+            click.edit(filename=filename, editor=editor)
+            return
+    except Exception:
+        pass
+
+    editor_cmd = editor or os.environ.get('VISUAL') or os.environ.get('EDITOR')
+    if not editor_cmd:
+        if os.name == 'posix':
+            editor_cmd = 'nano' if os.path.exists('/usr/bin/nano') or os.path.exists('/bin/nano') else 'vi'
+        elif os.name == 'nt':
+            editor_cmd = 'notepad'
+        else:
+            editor_cmd = 'vi'
+    cmd = shlex.split(editor_cmd) + [filename]
+    subprocess.run(cmd, check=True)
 
 from .. import ui
 from ..build import build
