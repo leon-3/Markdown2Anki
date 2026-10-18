@@ -391,6 +391,10 @@ def test_orphans_command_and_actions(vault, monkeypatch, capsys):
                 return 6
             if action == "modelNamesAndIds":
                 return {"M2A Basic": 1, "M2A Cloze": 2}
+            if action == "version":
+                return 6
+            if action == "modelNamesAndIds":
+                return {"M2A Basic": 1, "M2A Cloze": 2}
             if action == "findNotes":
                 return [101, 102]
             if action == "notesInfo":
@@ -446,6 +450,73 @@ def test_orphans_command_and_actions(vault, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "Permanently deleted 1 orphaned note(s)" in out
     assert any(a == "deleteNotes" and p.get("notes") == [102] for a, p in fake.calls)
+
+def test_orphans_delete_warning_for_suspended_cards(vault, monkeypatch, capsys):
+    from markdown2anki.export import ankiconnect
+
+    class FakeSuspendedOrphanAnki:
+        def __init__(self):
+            self.calls = []
+
+        def invoke(self, action, **params):
+            self.calls.append((action, params))
+            if action == "version":
+                return 6
+            if action == "modelNamesAndIds":
+                return {"M2A Basic": 1, "M2A Cloze": 2}
+            if action == "findNotes":
+                return [101, 102]
+            if action == "findCards":
+                q = params.get("query", "")
+                if "is:suspended" in q:
+                    return [1002]  # Card 1002 is suspended
+                return []
+            if action == "notesInfo":
+                return [
+                    {
+                        "noteId": 101,
+                        "modelName": "M2A Basic",
+                        "fields": {"Front": {"value": "Active Q"}, "Back": {"value": "Active A<!--m2a:act101-->"}},
+                        "cards": [1001],
+                    },
+                    {
+                        "noteId": 102,
+                        "modelName": "M2A Basic",
+                        "fields": {"Front": {"value": "Orphan Q"}, "Back": {"value": "Orphan A<!--m2a:orph999-->"}},
+                        "cards": [1002],
+                    },
+                ]
+            if action == "deleteNotes":
+                return True
+            return None
+
+    fake = FakeSuspendedOrphanAnki()
+    monkeypatch.setattr(ankiconnect.AnkiConnect, "invoke", lambda self, action, **p: fake.invoke(action, **p))
+    monkeypatch.setattr(ankiconnect.AnkiConnect, "reachable", lambda self: True)
+
+    v, cfg_path = vault
+    note = v / "50.054 Compiler" / "Anki - Lectures" / "W01 Intro.md"
+    content = note.read_text(encoding="utf-8") + "\n---\nADDED: Active Q %%act101%%\nActive A\n"
+    note.write_text(content, encoding="utf-8")
+
+    # 1. Inspect orphans shows suspended status
+    assert run("-c", cfg_path, "orphans") == 0
+    out = capsys.readouterr().out
+    assert "orph999" in out
+    assert "suspended" in out
+    assert "1 orphaned in Anki (1 suspended)" in out
+
+    # 2. Dry run delete shows suspended count
+    assert run("-c", cfg_path, "orphans", "--delete", "--dry-run") == 0
+    out = capsys.readouterr().out
+    assert "dry run - would delete 1 orphaned note(s) in Anki (1 suspended)" in out
+
+    # 3. Delete with --yes prints warning about suspended cards
+    assert run("-c", cfg_path, "orphans", "--delete", "--yes") == 0
+    out = capsys.readouterr().out
+    assert "warning: 1 of 1 orphaned note(s) contain suspended cards in Anki." in out
+    assert "These cards may have been suspended to preserve review history and intervals." in out
+    assert "Permanently deleted 1 orphaned note(s)" in out
 
 
 def test_sync_mark_deleted_and_recreate_missing(tmp_path, monkeypatch, capsys):
@@ -704,6 +775,10 @@ def test_orphans_empty_anki_still_detects_missing_in_vault(vault, monkeypatch, c
             self.calls = []
         def invoke(self, action, **params):
             self.calls.append((action, params))
+            if action == "version":
+                return 6
+            if action == "modelNamesAndIds":
+                return {"M2A Basic": 1, "M2A Cloze": 2}
             if action == "findNotes":
                 return []
             if action == "modelNamesAndIds":
@@ -804,6 +879,10 @@ def test_orphans_dry_run_and_recreate_flow(vault, monkeypatch, capsys):
             self.calls = []
         def invoke(self, action, **params):
             self.calls.append((action, params))
+            if action == "version":
+                return 6
+            if action == "modelNamesAndIds":
+                return {"M2A Basic": 1, "M2A Cloze": 2}
             if action == "findNotes":
                 q = params.get("query", "")
                 if "rec888" in q:

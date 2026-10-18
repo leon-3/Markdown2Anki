@@ -145,11 +145,29 @@ def run(
                 "cards": info.get("cards", []),
             })
 
+    suspended_card_ids: set[int] = set()
+    if orphaned_notes:
+        try:
+            res = client.invoke("findCards", query="is:suspended")
+            if isinstance(res, list):
+                suspended_card_ids = {int(c) for c in res}
+        except Exception:
+            suspended_card_ids = set()
+
+    for o in orphaned_notes:
+        card_ids = o.get("cards", [])
+        o["is_suspended"] = bool(card_ids and any(int(c) in suspended_card_ids for c in card_ids))
+
+    suspended_orphans_count = sum(1 for o in orphaned_notes if o.get("is_suspended"))
+
     missing_in_anki = [c for c in collected.cards if c.card_id and not c.deleted and c.card_id not in anki_cids]
 
     summary_parts = []
     if orphaned_notes:
-        summary_parts.append(f"{len(orphaned_notes)} orphaned in Anki")
+        if suspended_orphans_count > 0:
+            summary_parts.append(f"{len(orphaned_notes)} orphaned in Anki ({suspended_orphans_count} suspended)")
+        else:
+            summary_parts.append(f"{len(orphaned_notes)} orphaned in Anki")
     if missing_in_anki:
         summary_parts.append(f"{len(missing_in_anki)} missing in Anki")
     summary_text = ", ".join(summary_parts) if summary_parts else "0 issues detected"
@@ -169,15 +187,22 @@ def run(
                 clean_preview = f"[{o['model']}]"
             elif len(clean_preview) > 55:
                 clean_preview = clean_preview[:52] + "..."
-            rows.append([f"[dim]{escape(o['card_id'])}[/]", str(o["note_id"]), escape(o["model"]), escape(clean_preview)])
-        console.print(ui.table(["id", "note id", "model", "question"], rows))
+            status_str = "[yellow]suspended[/]" if o.get("is_suspended") else "[dim]active[/]"
+            rows.append([
+                f"[dim]{escape(o['card_id'])}[/]",
+                str(o["note_id"]),
+                escape(o["model"]),
+                status_str,
+                escape(clean_preview),
+            ])
+        console.print(ui.table(["id", "note id", "model", "status", "question"], rows))
         console.print()
 
     if missing_in_anki:
         console.print(f"  [bold]Section 2: Cards Deleted in Anki / Missing (Still Marked ADDED in Vault):[/] {len(missing_in_anki)} card(s)")
-        missing_rows = [
-            [f"[dim]{escape(c.card_id or '')}[/]", escape(f"{rel(c.file, cfg)}:{c.line}"), escape(short_question(c))]
-            for c in missing_in_anki
+        missing_rows = [\
+            [f"[dim]{escape(c.card_id or '')}[/]", escape(f"{rel(c.file, cfg)}:{c.line}"), escape(short_question(c))]\
+            for c in missing_in_anki\
         ]
         console.print(ui.table(["id", "where", "question"], missing_rows))
         console.print()
@@ -187,13 +212,19 @@ def run(
             card_ids_to_suspend = [cid for o in orphaned_notes for cid in o["cards"]]
             console.print(f"  [dim]dry run - would suspend {len(card_ids_to_suspend)} card(s)[/]")
         if delete and orphaned_notes:
-            console.print(f"  [dim]dry run - would delete {len(orphaned_notes)} orphaned note(s) in Anki[/]")
+            if suspended_orphans_count > 0:
+                console.print(
+                    f"  [dim]dry run - would delete {len(orphaned_notes)} orphaned note(s) in Anki "
+                    f"({suspended_orphans_count} suspended)[/]"
+                )
+            else:
+                console.print(f"  [dim]dry run - would delete {len(orphaned_notes)} orphaned note(s) in Anki[/]")
         if mark_deleted and missing_in_anki:
             files = {c.file for c in missing_in_anki}
             console.print(f"  [dim]dry run - would mark {len(missing_in_anki)} card(s) as DELETED in {len(files)} note(s)[/]")
         if recreate and missing_in_anki:
             console.print(f"  [dim]dry run - would recreate {len(missing_in_anki)} card(s) in Anki[/]")
-        if not any((suspend, delete, mark_deleted, recreate)):\
+        if not any((suspend, delete, mark_deleted, recreate)):
             console.print("  [dim]dry run - nothing modified[/]")
         return 0
 
@@ -214,7 +245,22 @@ def run(
     elif delete:
         acted = True
         if orphaned_notes:
-            if not yes and not ui.confirm(f"Permanently delete {len(orphaned_notes)} orphaned note(s) from Anki?"):
+            if suspended_orphans_count > 0:
+                console.print(
+                    f"  [bold yellow]warning:[/] {suspended_orphans_count} of {len(orphaned_notes)} "
+                    "orphaned note(s) contain suspended cards in Anki."
+                )
+                console.print(
+                    "  [dim]These cards may have been suspended to preserve review history and intervals.[/]"
+                )
+
+            delete_prompt = (
+                f"Permanently delete all {len(orphaned_notes)} orphaned note(s) "
+                f"(including {suspended_orphans_count} suspended) from Anki?"
+                if suspended_orphans_count > 0
+                else f"Permanently delete {len(orphaned_notes)} orphaned note(s) from Anki?"
+            )
+            if not yes and not ui.confirm(delete_prompt):
                 console.print("  [dim]aborted - nothing deleted in Anki[/]")
             else:
                 nids_to_delete = [o["note_id"] for o in orphaned_notes]
