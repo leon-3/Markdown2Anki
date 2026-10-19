@@ -304,3 +304,17 @@ def test_build_native_image_occlusion(tmp_path):
     assert note.fields[3] == ""  # Back Extra
     assert note.fields[4] == ""  # Comments (ready for <!--m2a:id-->)
     assert note.media == [img]
+
+def test_resolve_image_path_traversal_prevention(tmp_path):
+    vault_dir = tmp_path / "vault"
+    vault_dir.mkdir()
+    secret_file = tmp_path / "secret.png"
+    secret_file.write_bytes(b"sensitive private key")
+
+    # Note references file outside vault directory via ../
+    cards = _cards(vault_dir, "notes", "---\nQuestion\n![[../../secret.png]]\n")
+    diagnostics = []
+    result = build(cards, diagnostics, vault_root=vault_dir)
+    assert len(diagnostics) == 1
+    assert "image not found next to the note" in diagnostics[0].message
+    assert result.media == []

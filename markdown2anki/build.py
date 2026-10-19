@@ -120,9 +120,15 @@ def resolve_image_path(card: Card, name: str, vault_root: Path | None = None) ->
             vault_root / "_resources" / clean_name,
             vault_root / "_resources" / clean_unquoted,
         ])
+    boundary = vault_root.resolve() if vault_root is not None else note_dir.resolve()
     for candidate in candidates:
         if candidate.is_file():
-            return candidate.resolve()
+            resolved = candidate.resolve()
+            try:
+                resolved.relative_to(boundary)
+            except ValueError:
+                continue
+            return resolved
     return None
 
 
