@@ -42,7 +42,7 @@ def user_templates_dir() -> Path:
 @dataclass
 class Config:
     vault: Path
-    deck: str = "Anki"  # default target Anki deck; "::" separates subdecks
+    deck: str = "Default"  # default target Anki deck; "::" separates subdecks
     package_name: str = ""  # file name of the .apkg export; defaults to the deck name
     base_tag: str = ""  # tag hierarchy root prepended to every card; may be empty
     pad_single_digit_tags: bool = True  # True: zero-pad single-digit numbers in tags (1 -> 01)
@@ -51,7 +51,7 @@ class Config:
     anki_connect_url: str = "http://127.0.0.1:8765"
     anki_basic_model: str = "M2A Basic"  # note type names used by the AnkiConnect target
     anki_cloze_model: str = "M2A Cloze"
-    cloze_notes: bool = False  # True: 'Cloze' cards with {{c1::}} markers become real cloze notes
+    cloze_notes: bool = True  # True: 'Cloze' cards with {{c1::}} markers become real cloze notes
     image_occlusion_mode: str = "native"  # "native": creates Image Occlusion notes; "stage": offline folder staging
     freeze_image_occlusions: bool = False  # True: completely freeze added Image Occlusion cards
     suspend_new_occlusions: bool = True  # True: suspend newly synced Image Occlusion cards until masked
@@ -110,18 +110,27 @@ class Config:
     def from_dict(cls, data: dict[str, Any], source: Path) -> Config:
         """Build a Config from parsed TOML. Relative paths are taken relative to the config file."""
         if not data.get("vault"):
-            raise ValueError(f"{source}: 'vault' is required")
+            if source is not None and source.name == CONFIG_FILE_NAME:
+                data["vault"] = "."
+            else:
+                raise ValueError(f"{source}: 'vault' is required")
 
         values = dict(data)
-        # Migrate or support legacy 'decks' key
-        if "decks" in values and "deck_routing" not in values:
+        # Migrate or support aliases 'deck_rules' or legacy 'decks' key
+        if "deck_rules" in values and "deck_routing" not in values:
+            values["deck_routing"] = values.pop("deck_rules")
+        elif "decks" in values and "deck_routing" not in values:
             values["deck_routing"] = values.pop("decks")
 
-        # Migrate or support legacy 'subjects' key as tag_aliases
-        if "subjects" in values and "tag_aliases" not in values:
+        # Migrate or support aliases 'tag_rules' or legacy 'subjects' key as tag_aliases
+        if "tag_rules" in values and "tag_aliases" not in values:
+            values["tag_aliases"] = values.pop("tag_rules")
+        elif "subjects" in values and "tag_aliases" not in values:
             values["tag_aliases"] = values.pop("subjects")
 
-        # Clean legacy keys
+        # Clean legacy keys and aliases
+        values.pop("deck_rules", None)
+        values.pop("tag_rules", None)
         values.pop("decks", None)
         values.pop("subjects", None)
         values.pop("subdirectories", None)
@@ -271,7 +280,7 @@ def save_vault_config(vault_path: Path, cfg: Config) -> None:
                 del doc[table_name]
 
     # Explicitly pop legacy tables if present in existing document
-    for legacy_key in ("decks", "subjects", "subdirectories", "display"):
+    for legacy_key in ("deck_rules", "tag_rules", "decks", "subjects", "subdirectories", "display"):
         if legacy_key in doc:
             del doc[legacy_key]
 
@@ -330,13 +339,13 @@ def render_toml(cfg: Config, base: Path | None = None) -> str:
         "# Markdown2Anki configuration. Paths may use ~; relative paths are relative to this file.",
         f"vault = {quote(vault_val)}",
         "",
-        "# Default Anki deck the cards go into; use :: for subdecks.",
+        "# Default Target Deck: fallback Anki deck for flashcards that do not match any folder rule (use :: for subdecks).",
         f"deck = {quote(cfg.deck)}",
         "# File name of the .apkg export.",
         f"package_name = {quote(cfg.package_name)}",
-        "# Tag prepended to every card (may be empty).",
+        "# Base Tag Prefix: optional root tag prepended before all generated tags (empty for none).",
         f"base_tag = {quote(cfg.base_tag)}",
-        "# Automatically pad single-digit numbers with leading zero in tags (e.g. 1 -> 01).",
+        "# Pad Folder Numbers: zero-pad single-digit numbers in tags (e.g. 1. Topic -> 01_Topic).",
         f"pad_single_digit_tags = {'true' if cfg.pad_single_digit_tags else 'false'}",
         "# Where .apkg files and image-occlusion sources are written.",
         f"output_dir = {quote(output_dir_val)}",
@@ -368,8 +377,8 @@ def render_toml(cfg: Config, base: Path | None = None) -> str:
         "ignore = " + json.dumps(cfg.ignore, ensure_ascii=False),
         "",
         *table("deck_routing", cfg.deck_routing,
-               "Vault folder/path prefix -> target Anki deck name override (longest prefix match)."),
+               "Deck Rules & Folder Mapping: vault folder/path prefix -> target Anki deck (longest prefix match)."),
         *table("tag_aliases", cfg.tag_aliases,
-               "Vault folder/path prefix -> tag replacement, alias, or '' to omit."),
+               "Tag Rules & Folder Aliases: vault folder/path prefix -> tag replacement, alias, or '' to omit."),
     ]
     return "\n".join(lines)

@@ -2,6 +2,7 @@ from pathlib import Path
 from markdown2anki.config import (
     Config,
     load_vault_config,
+    load_config,
     save_vault_config,
     CONFIG_FILE_NAME,
 )
@@ -12,7 +13,7 @@ def test_load_vault_config_nonexistent(tmp_path):
     vault.mkdir()
     cfg = load_vault_config(vault)
     assert cfg.vault == vault
-    assert cfg.deck == "Anki"
+    assert cfg.deck == "Default"
     assert cfg.deck_routing == {}
     assert cfg.tag_aliases == {}
     assert cfg.pad_single_digit_tags is True
@@ -136,7 +137,22 @@ def test_save_vault_config_new_file_has_comments_and_relative_path(tmp_path):
 
     # Has comments from render_toml
     assert "# Markdown2Anki configuration." in saved_text
-    assert "# Default Anki deck the cards go into" in saved_text
+    assert "# Default Target Deck" in saved_text
     # Has relative vault = "."
     assert 'vault = "."' in saved_text
     assert str(vault) not in saved_text
+
+
+def test_deck_rules_and_tag_rules_aliases(tmp_path):
+    cfg_file = tmp_path / "m2a.toml"
+    cfg_file.write_text("""
+vault = "."
+[deck_rules]
+"Math" = "Science::Math"
+
+[tag_rules]
+"Math" = "calc"
+""", encoding="utf-8")
+    cfg = load_config(cfg_file)
+    assert cfg.deck_routing == {"Math": "Science::Math"}
+    assert cfg.tag_aliases == {"Math": "calc"}

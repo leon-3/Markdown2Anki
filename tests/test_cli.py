@@ -432,7 +432,7 @@ def test_orphans_command_and_actions(vault, monkeypatch, capsys):
     note.write_text(content, encoding="utf-8")
 
     # 1. Inspect orphans
-    assert run("-c", cfg_path, "orphans") == 0
+    assert run("-c", cfg_path, "deleted") == 0
     out = capsys.readouterr().out
     assert "orph999" in out
     assert "Orphan Q" in out
@@ -440,13 +440,13 @@ def test_orphans_command_and_actions(vault, monkeypatch, capsys):
     assert "Cards Deleted in Anki" in out
 
     # 2. Suspend orphans
-    assert run("-c", cfg_path, "orphans", "--suspend") == 0
+    assert run("-c", cfg_path, "deleted", "--suspend") == 0
     out = capsys.readouterr().out
     assert "Suspended 1 card(s)" in out
     assert any(a == "suspend" and p.get("cards") == [1002] for a, p in fake.calls)
 
     # 3. Delete orphans with confirmation
-    assert run("-c", cfg_path, "orphans", "--delete", "--yes") == 0
+    assert run("-c", cfg_path, "deleted", "--delete", "--yes") == 0
     out = capsys.readouterr().out
     assert "Permanently deleted 1 orphaned note(s)" in out
     assert any(a == "deleteNotes" and p.get("notes") == [102] for a, p in fake.calls)
@@ -500,19 +500,19 @@ def test_orphans_delete_warning_for_suspended_cards(vault, monkeypatch, capsys):
     note.write_text(content, encoding="utf-8")
 
     # 1. Inspect orphans shows suspended status
-    assert run("-c", cfg_path, "orphans") == 0
+    assert run("-c", cfg_path, "deleted") == 0
     out = capsys.readouterr().out
     assert "orph999" in out
     assert "suspended" in out
     assert "1 orphaned in Anki (1 suspended)" in out
 
     # 2. Dry run delete shows suspended count
-    assert run("-c", cfg_path, "orphans", "--delete", "--dry-run") == 0
+    assert run("-c", cfg_path, "deleted", "--delete", "--dry-run") == 0
     out = capsys.readouterr().out
     assert "dry run - would delete 1 orphaned note(s) in Anki (1 suspended)" in out
 
     # 3. Delete with --yes prints warning about suspended cards
-    assert run("-c", cfg_path, "orphans", "--delete", "--yes") == 0
+    assert run("-c", cfg_path, "deleted", "--delete", "--yes") == 0
     out = capsys.readouterr().out
     assert "warning: 1 of 1 orphaned note(s) contain suspended cards in Anki." in out
     assert "These cards may have been suspended to preserve review history and intervals." in out
@@ -562,25 +562,25 @@ def test_sync_mark_deleted_and_recreate_missing(tmp_path, monkeypatch, capsys):
     # 0. Plain sync (no --update) notifies about cards deleted in Anki with orphans guidance
     assert run("-c", cfg_file, "sync") == 0
     out = capsys.readouterr().out
-    assert "2 card(s) were deleted in Anki. Run m2a orphans to review and resolve." in out
+    assert "2 card(s) were deleted in Anki. Run m2a deleted to review and resolve." in out
 
     # 1. By default with --update, missing cards are detected and warning is shown
     assert run("-c", cfg_file, "sync", "--update") == 0
     out = capsys.readouterr().out
-    assert "2 card(s) were deleted in Anki. Run m2a orphans to review and resolve." in out
+    assert "2 card(s) were deleted in Anki. Run m2a deleted to review and resolve." in out
     assert "ADDED: Question Missing %%miss111%%" in note_file.read_text(encoding="utf-8")
 
-    # 2. In m2a orphans --mark-deleted, both basic and image occlusion cards are marked DELETED: in note
-    assert run("-c", cfg_file, "orphans", "--mark-deleted", "--yes") == 0
+    # 2. In m2a deleted --mark-deleted, both basic and image occlusion cards are marked DELETED: in note
+    assert run("-c", cfg_file, "deleted", "--mark-deleted", "--yes") == 0
     out = capsys.readouterr().out
     assert "Marked 2 card(s) as DELETED" in out
     txt = note_file.read_text(encoding="utf-8")
     assert "DELETED: Question Missing %%miss111%%" in txt
     assert "DELETED: Image Cloze %%occ222%%" in txt
 
-    # 3. With m2a orphans --recreate (revert to ADDED first)
+    # 3. With m2a deleted --recreate (revert to ADDED first)
     note_file.write_text(note_content, encoding="utf-8")
-    assert run("-c", cfg_file, "orphans", "--recreate", "--yes") == 0
+    assert run("-c", cfg_file, "deleted", "--recreate", "--yes") == 0
     out = capsys.readouterr().out
     assert "Recreated 1 card(s)" in out
     assert any(a == "addNotes" for a, p in fake.calls)
@@ -795,13 +795,13 @@ def test_orphans_empty_anki_still_detects_missing_in_vault(vault, monkeypatch, c
     note.write_text(content, encoding="utf-8")
 
     # Should detect 1 missing card in Anki without early exit
-    assert run("-c", cfg_path, "orphans") == 0
+    assert run("-c", cfg_path, "deleted") == 0
     out = capsys.readouterr().out
     assert "solo123" in out
     assert "Section 2" in out
 
     # Test marking it DELETED
-    assert run("-c", cfg_path, "orphans", "--mark-deleted", "--yes") == 0
+    assert run("-c", cfg_path, "deleted", "--mark-deleted", "--yes") == 0
     assert "DELETED: Solitary Q %%solo123%%" in note.read_text(encoding="utf-8")
 
 
@@ -847,7 +847,7 @@ def test_orphans_course_filter_does_not_flag_other_courses(vault, monkeypatch, c
     monkeypatch.setattr(ankiconnect.AnkiConnect, "reachable", lambda self: True)
 
     # When filtering by course "50.054 Compiler", net202 must NOT be treated as an orphan!
-    assert run("-c", cfg_path, "orphans", "--course", "50.054 Compiler") == 0
+    assert run("-c", cfg_path, "deleted", "--course", "50.054 Compiler") == 0
     out = capsys.readouterr().out
     assert "0 orphaned in Anki" in out
     assert "net202" not in out
@@ -860,10 +860,10 @@ def test_orphans_mutually_exclusive_and_combined_flags(vault, monkeypatch, capsy
     v, cfg_path = vault
 
     # Mutually exclusive flags
-    assert run("-c", cfg_path, "orphans", "--delete", "--suspend") == 2
+    assert run("-c", cfg_path, "deleted", "--delete", "--suspend") == 2
     assert "cannot combine --suspend and --delete" in capsys.readouterr().err
 
-    assert run("-c", cfg_path, "orphans", "--mark-deleted", "--recreate") == 2
+    assert run("-c", cfg_path, "deleted", "--mark-deleted", "--recreate") == 2
     assert "cannot combine --mark-deleted and --recreate" in capsys.readouterr().err
 
 
@@ -911,13 +911,13 @@ def test_orphans_dry_run_and_recreate_flow(vault, monkeypatch, capsys):
     monkeypatch.setattr(ankiconnect.AnkiConnect, "reachable", lambda self: True)
 
     # 1. Dry run shows would-be changes
-    assert run("-c", cfg_path, "orphans", "--delete", "--recreate", "--dry-run") == 0
+    assert run("-c", cfg_path, "deleted", "--delete", "--recreate", "--dry-run") == 0
     dry_out = capsys.readouterr().out
     assert "dry run - would delete 1 orphaned note(s)" in dry_out
     assert "dry run - would recreate 1 card(s)" in dry_out
 
     # 2. Combined run: deletes Section 1 orphan AND recreates Section 2 missing card in single execution!
-    assert run("-c", cfg_path, "orphans", "--delete", "--recreate", "--yes") == 0
+    assert run("-c", cfg_path, "deleted", "--delete", "--recreate", "--yes") == 0
     combined_out = capsys.readouterr().out
     assert "Permanently deleted 1 orphaned note(s)" in combined_out
     assert "Recreated 1 card(s)" in combined_out
@@ -1017,7 +1017,7 @@ def test_config_validate(vault, capsys, tmp_path):
 
 
 def test_help_epilogs_present(capsys):
-    for cmd in ("status", "sync", "init", "config", "orphans", "unflag"):
+    for cmd in ("status", "sync", "init", "config", "deleted", "unflag"):
         assert run(cmd, "--help") == 0
         out = capsys.readouterr().out
         assert "Examples:" in out

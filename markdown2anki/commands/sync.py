@@ -138,13 +138,17 @@ def run(
         print_problems(collected.diagnostics, cfg)
     _print_counts(result)
 
+    updatable_cards = [c for c in collected.cards if c.updatable]
+
     if not result.notes and not result.occlusions:
         console.print("  [dim]nothing to export[/]")
         if chosen_target == Target.anki.value and not dry_run and not update:
             missing_warning = _find_missing_in_anki(cfg, collected.cards)
             if missing_warning:
-                console.print(f"  [yellow]warning:[/] {len(missing_warning)} card(s) were deleted in Anki. Run [cyan]m2a orphans[/] to review and resolve.")
+                console.print(f"  [yellow]warning:[/] {len(missing_warning)} card(s) were deleted in Anki. Run [cyan]m2a deleted[/] to review and resolve.")
         _print_sync_summary(0, 0, 0, 0, 0)
+        if not update and updatable_cards:
+            console.print(f"  [dim][INFO] {len(updatable_cards)} modified card(s) found in vault. Run 'm2a sync -u' to update existing cards in Anki.[/]")
         return 1 if collected.has_errors else 0
 
     if dry_run or verbose:
@@ -159,6 +163,8 @@ def run(
         if dry_run:
             console.print()
             console.print("  [dim]dry run - nothing written[/]")
+            if not update and updatable_cards:
+                console.print(f"  [dim][INFO] {len(updatable_cards)} modified card(s) found in vault. Run 'm2a sync -u' to update existing cards in Anki.[/]")
             return 0
 
     seen = len(collected.diagnostics)
@@ -173,7 +179,10 @@ def run(
         missing_cards = _find_missing_in_anki(cfg, collected.cards)
 
     if missing_cards:
-        console.print(f"  [yellow]warning:[/] {len(missing_cards)} card(s) were deleted in Anki. Run [cyan]m2a orphans[/] to review and resolve.")
+        console.print(f"  [yellow]warning:[/] {len(missing_cards)} card(s) were deleted in Anki. Run [cyan]m2a deleted[/] to review and resolve.")
+
+    if not update and updatable_cards:
+        console.print(f"  [dim][INFO] {len(updatable_cards)} modified card(s) found in vault. Run 'm2a sync -u' to update existing cards in Anki.[/]")
 
     return 1 if collected.has_errors else 0
 

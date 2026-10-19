@@ -6,7 +6,6 @@ from .parser import Card, parse_file, parse_lines
 from .build import BuildResult, RenderedNote, build, resolve_image_path
 from .render import render_markdown
 from .occlusions import export_occlusions
-from .export.ankiconnect import AnkiConnect, AnkiConnectError, AnkiExport, export_ankiconnect
 from .flags import clear_flags, write_flags
 from .config import Config, load_config, load_vault_config, save_vault_config
 
@@ -18,8 +17,17 @@ except PackageNotFoundError:  # running from a checkout without `pip install -e 
 
 def __getattr__(name: str):
     if name in ("export_apkg", "ApkgExport"):
-        from .export import apkg
-        return getattr(apkg, name)
+        try:
+            from .export import apkg
+            return getattr(apkg, name)
+        except ImportError:
+            pass
+    if name in ("AnkiConnect", "AnkiConnectError", "AnkiExport", "export_ankiconnect"):
+        try:
+            from .export import ankiconnect
+            return getattr(ankiconnect, name)
+        except ImportError:
+            pass
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

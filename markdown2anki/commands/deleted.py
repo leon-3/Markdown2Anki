@@ -1,4 +1,4 @@
-"""``m2a orphans``: inspect and resolve drift between vault notes and Anki."""
+"""``m2a deleted``: inspect and resolve deleted cards and drift between vault notes and Anki."""
 from __future__ import annotations
 
 import fnmatch
@@ -172,14 +172,14 @@ def run(
         summary_parts.append(f"{len(missing_in_anki)} missing in Anki")
     summary_text = ", ".join(summary_parts) if summary_parts else "0 issues detected"
 
-    ui.header("m2a orphans", summary_text)
+    ui.header("m2a deleted", summary_text)
 
     if not orphaned_notes and not missing_in_anki:
         console.print("  [green]✓[/] All cards in sync: 0 orphaned in Anki, 0 missing in Anki.")
         return 0
 
     if orphaned_notes:
-        console.print(f"  [bold]Section 1: Orphaned in Anki (Removed from Vault):[/] {len(orphaned_notes)} note(s)")
+        console.print(f"  [bold]Section 1: Orphaned Cards in Anki (Deleted from Vault):[/] {len(orphaned_notes)} note(s)")
         rows = []
         for o in orphaned_notes:
             clean_preview = re.sub(r"<[^>]+>", "", o["preview"]).replace("\n", " ").strip()
@@ -199,10 +199,10 @@ def run(
         console.print()
 
     if missing_in_anki:
-        console.print(f"  [bold]Section 2: Cards Deleted in Anki / Missing (Still Marked ADDED in Vault):[/] {len(missing_in_anki)} card(s)")
-        missing_rows = [\
-            [f"[dim]{escape(c.card_id or '')}[/]", escape(f"{rel(c.file, cfg)}:{c.line}"), escape(short_question(c))]\
-            for c in missing_in_anki\
+        console.print(f"  [bold]Section 2: Cards Deleted in Anki (Still Active in Vault):[/] {len(missing_in_anki)} card(s)")
+        missing_rows = [
+            [f"[dim]{escape(c.card_id or '')}[/]", escape(f"{rel(c.file, cfg)}:{c.line}"), escape(short_question(c))]
+            for c in missing_in_anki
         ]
         console.print(ui.table(["id", "where", "question"], missing_rows))
         console.print()
@@ -224,7 +224,7 @@ def run(
             console.print(f"  [dim]dry run - would mark {len(missing_in_anki)} card(s) as DELETED in {len(files)} note(s)[/]")
         if recreate and missing_in_anki:
             console.print(f"  [dim]dry run - would recreate {len(missing_in_anki)} card(s) in Anki[/]")
-        if not any((suspend, delete, mark_deleted, recreate)):
+        if not any((suspend, delete, mark_deleted, recreate)):\
             console.print("  [dim]dry run - nothing modified[/]")
         return 0
 
@@ -336,7 +336,7 @@ def run(
     if not acted:
         console.print("  [bold]To resolve:[/]")
         if orphaned_notes and not (delete or suspend):
-            console.print("    • Anki orphans:  [cyan]m2a orphans --delete[/]  (or [cyan]--suspend[/])")
+            console.print("    • Orphaned cards in Anki:  [cyan]m2a deleted --delete[/]  (or [cyan]--suspend[/])")
         if missing_in_anki and not (mark_deleted or recreate):
-            console.print("    • Missing cards: [cyan]m2a orphans --mark-deleted[/]  (or [cyan]--recreate[/])")
+            console.print("    • Cards deleted in Anki:   [cyan]m2a deleted --mark-deleted[/]  (or [cyan]--recreate[/])")
     return 0

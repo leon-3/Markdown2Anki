@@ -26,8 +26,8 @@ LEGACY_ENV = Path(".env")
 def run(
     ctx: typer.Context,
     vault: Path | None = typer.Option(None, "--vault", help="Obsidian vault folder path."),
-    deck: str | None = typer.Option(None, "--deck", help="Default Anki deck name (use '::' for subdecks)."),
-    base_tag: str | None = typer.Option(None, "--base-tag", help="Root tag prepended to every card (empty for none)."),
+    deck: str | None = typer.Option(None, "--deck", help="Default target Anki deck name (use '::' for subdecks)."),
+    base_tag: str | None = typer.Option(None, "--base-tag", help="Base tag prefix prepended to every card (empty for none)."),
     target: Target | None = typer.Option(None, "--target", help="Default export target: 'anki' (push via AnkiConnect) or 'apkg' (write file)."),
     output_dir: Path | None = typer.Option(None, "--output-dir", help="Directory where .apkg packages and image occlusion files are written."),
     here: bool = typer.Option(False, "--here", help=f"Write ./{CONFIG_FILE_NAME} in current directory instead of user config ({user_config_path()})."),
@@ -110,12 +110,12 @@ def _ask_vault(preset: Path | None, interactive: bool) -> Path | None:
 
 def _ask_anki(cfg: Config) -> None:
     _section("Anki", True)
-    cfg.deck = ui.ask_text("Deck (use :: for subdecks)", cfg.deck)
+    cfg.deck = ui.ask_text("Default Target Deck (fallback deck, use :: for subdecks)", cfg.deck)
     cfg.package_name = cfg.deck.replace("::", "-")
-    cfg.base_tag = ui.ask_text("Tag prepended to every card (empty for none)", cfg.base_tag, allow_empty=True)
+    cfg.base_tag = ui.ask_text("Base Tag Prefix (optional root tag prepended before all generated tags, empty for none)", cfg.base_tag, allow_empty=True)
     cfg.target = ui.ask_select("Export target: push into a running Anki (anki) or write a file (apkg)?",
                                TARGETS, cfg.target)
-    cfg.cloze_notes = ui.ask_confirm("Export 'Cloze' cards with {{c1::...}} markers as real cloze notes?",
+    cfg.cloze_notes = ui.ask_confirm("Export 'Cloze' cards with {{c1::...}} syntax as real cloze notes?",
                                      cfg.cloze_notes)
     cfg.output_dir = Path(ui.ask_path("Folder for .apkg files and image-occlusion sources", str(cfg.output_dir)))
 

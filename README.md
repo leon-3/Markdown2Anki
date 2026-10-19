@@ -17,9 +17,9 @@ Turn flashcard notes written in Obsidian or standard Markdown into Anki cards.
 - **In-Place Card Updates**:
   - Tags cards with compact 6-character IDs embedded in Markdown (`ADDED: Question %%k3f9qz%%`) and Anki (`<!--m2a:id-->`).
   - Run `m2a sync --update` to push edits into Anki in place—retaining card intervals, ease factors, and review logs.
-- **Longest-Prefix Deck Routing**:
+- **Deck Rules & Folder Mapping**:
   - Map vault folders and nested subdirectories directly to target Anki decks via `[deck_routing]`. More specific nested paths automatically override parent folder rules.
-- **Hierarchical Tagging & Aliasing**:
+- **Tag Rules & Folder Aliases**:
   - Generates tags matching vault folder structure.
   - Custom replacements or tag suppression via `[tag_aliases]` (e.g. mapping `"archive" = ""` omits that folder from tags).
   - Optional single-digit padding (`pad_single_digit_tags = true`) transforms `'1. Topic'` into `'01_Topic'` for natural alphabetical sorting, while protecting alphanumeric terms like `MP3` or `ISO9001`.
@@ -140,7 +140,7 @@ void quicksort(int *arr, int low, int high) { ... }
 # Path to your Obsidian vault (~ and relative paths supported)
 vault = "~/Documents/ObsidianVault"
 
-# Default fallback Anki deck
+# Default Target Deck: fallback Anki deck for cards without explicit folder rule
 deck = "Default"
 package_name = "default-package"
 
@@ -156,8 +156,8 @@ anki_connect_url = "http://127.0.0.1:8765"
 anki_basic_model = "M2A Basic"
 anki_cloze_model = "M2A Cloze"
 
-# Convert Cloze cards with {{c1::}} into native Anki Cloze notes
-cloze_notes = false
+# Convert Cloze cards with {{c1::...}} syntax into native Anki Cloze notes
+cloze_notes = true
 
 # Rename media to deterministic lowercase SHA-256 hashes
 hash_media = true
@@ -171,13 +171,13 @@ pad_single_digit_tags = true
 # Folders and glob patterns to ignore during scanning
 ignore = [".git", ".obsidian", "templates", "archive/*", "ai"]
 
-# Deck routing rules (longest-prefix match)
+# Deck Rules & Folder Mapping (longest-prefix match)
 [deck_routing]
 "courses" = "01. University"
 "courses/cs101" = "01. University::CS101"
 "work" = "02. Professional"
 
-# Tag path aliases (map folder paths to custom tags, or "" to omit)
+# Tag Rules & Folder Aliases (map folder paths to custom tags, or "" to omit)
 [tag_aliases]
 "courses" = "01_uni"
 "work" = "02_work"
@@ -199,7 +199,7 @@ ignore = [".git", ".obsidian", "templates", "archive/*", "ai"]
 | `m2a status` | Display card counts (pending, added, total) per folder. |
 | `m2a sync` | Export pending cards into Anki (`--update` updates existing cards, `--dry-run` previews). |
 | `m2a unflag` | Remove `ADDED` flags from Markdown files to re-export cards as new notes. |
-| `m2a templates` | Inspect and sync note type templates with Anki. |
+| `m2a deleted` | Detect and resolve deleted cards and drift between Obsidian vault and Anki (`--suspend`, `--delete`, `--mark-deleted`, `--recreate`). |
 
 ---
 

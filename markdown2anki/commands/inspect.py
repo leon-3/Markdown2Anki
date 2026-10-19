@@ -274,6 +274,9 @@ def status(
 
     console.print()
     errors = print_problems(collected.diagnostics, cfg, include_info=verbose, skipped_count=len(result.skipped))
+    updatable_cards = [c for c in active_cards if c.updatable]
+    if updatable_cards:
+        console.print(f"  [dim][INFO] {len(updatable_cards)} modified card(s) found in vault. Run 'm2a sync -u' to update existing cards in Anki.[/]")
     return 1 if errors else 0
 
 
