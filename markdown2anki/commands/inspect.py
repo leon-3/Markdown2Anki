@@ -276,7 +276,10 @@ def status(
     errors = print_problems(collected.diagnostics, cfg, include_info=verbose, skipped_count=len(result.skipped))
     updatable_cards = [c for c in active_cards if c.updatable]
     if updatable_cards:
-        console.print(f"  [dim][INFO] {len(updatable_cards)} modified card(s) found in vault. Run 'm2a sync -u' to update existing cards in Anki.[/]")
+        console.print(
+            f"  [dim][INFO] {len(updatable_cards)} already-synced card(s) found in vault. "
+            "Run 'm2a sync -u' to push updates if any were modified.[/]"
+        )
     if cfg.target == Target.anki.value:
         try:
             client = AnkiConnect(cfg.anki_connect_url)
