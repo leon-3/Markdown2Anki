@@ -1022,3 +1022,42 @@ def test_help_epilogs_present(capsys):
         out = capsys.readouterr().out
         assert "Examples:" in out
         assert f"m2a {cmd}" in out
+
+
+def test_sync_unflag_occlusions_only(vault, monkeypatch, capsys):
+    v, cfg_path = vault
+    calls = []
+
+    class FakeAnkiClient:
+        def __init__(self, url):
+            self.url = url
+        def reachable(self):
+            return True
+        def invoke(self, action, **params):
+            calls.append((action, params))
+            if action == "findNotes":
+                return [201, 202]
+            return None
+        def notes_info(self, notes):
+            return [
+                {"noteId": 201, "tags": ["TODO_PROCESS_OCCLUSION"], "fields": {"Occlusion": {"value": "<svg><rect data-cloze=\"1\"/></svg>"}}, "cards": [2001]},
+                {"noteId": 202, "tags": ["TODO_PROCESS_OCCLUSION"], "fields": {"Occlusion": {"value": ""}}, "cards": [2002]},
+            ]
+
+    monkeypatch.setattr("markdown2anki.commands.sync.AnkiConnect", FakeAnkiClient)
+
+    # 1. Dry run
+    assert run("-c", cfg_path, "sync", "--unflag-occlusions-only", "-n") == 0
+    out = capsys.readouterr().out
+    assert "Checked 2 image occlusion note(s) in Anki" in out
+    assert "1 awaiting masks (untouched)" in out
+    assert "dry run - would unsuspend 1 note(s) (1 card(s))" in out
+    assert not any(a == "removeTags" or a == "unsuspend" for a, _ in calls)
+
+    # 2. Execution
+    calls.clear()
+    assert run("-c", cfg_path, "sync", "--unflag-occlusions-only") == 0
+    out = capsys.readouterr().out
+    assert "Unsuspended 1 note(s) (1 card(s)) and removed TODO_PROCESS_OCCLUSION" in out
+    assert any(a == "removeTags" and p.get("notes") == [201] for a, p in calls)
+    assert any(a == "unsuspend" and p.get("cards") == [2001] for a, p in calls)

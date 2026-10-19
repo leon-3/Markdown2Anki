@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from ..build import MODEL_CLOZE, MODEL_IMAGE_OCCLUSION, BuildResult, RenderedNote
+from ..constants import CLOZE_TAG, OCCLUSION_TAG
+from ..occlusions import is_cloze_completed, is_occlusion_completed
 from ..config import Config
 from ..ids import anki_note_id, is_anki_note_id, new_card_id, search_query, with_marker
 from ..models import (
@@ -26,6 +28,10 @@ from ..diagnostics import Diagnostic, DiagnosticCategory, DiagnosticLevel
 from ..parser import KIND_IMAGE_OCCLUSION, LEVEL_ERROR, LEVEL_WARNING, Card
 
 Flags = list[tuple[Card, str]]
+
+
+def _strip_cloze_markers(text: str) -> str:
+    return re.sub(r"\{\{c\d+::(.*?)(?:::.*?)?\}\}", lambda m: m.group(1), text)
 
 
 class AnkiConnectError(RuntimeError):
@@ -120,6 +126,114 @@ class AnkiConnect:
             else:
                 results.extend([(self.invoke("findNotes", query=q) or []) for q in chunk])
         return results
+
+
+@dataclass
+class UnflagOcclusionsResult:
+    total_checked: int = 0
+    awaiting_masks_count: int = 0
+    completed_notes_count: int = 0
+    unsuspended_cards_count: int = 0
+    unflagged_note_ids: list[int] = field(default_factory=list)
+    unsuspended_card_ids: list[int] = field(default_factory=list)
+
+
+def resolve_completed_occlusions(
+    client: AnkiConnect,
+    dry_run: bool = False,
+) -> UnflagOcclusionsResult:
+    """Find notes with TODO_PROCESS_OCCLUSION or TODO_PROCESS_CLOZES tag and unsuspend/unflag notes that have masks/clozes drawn."""
+    result = UnflagOcclusionsResult()
+    try:
+        occ_note_ids = client.invoke("findNotes", query=f"tag:{OCCLUSION_TAG}") or []
+    except Exception as exc:
+        raise AnkiConnectError(f"Failed to query notes with tag {OCCLUSION_TAG}: {exc}") from exc
+
+    try:
+        cloze_note_ids = client.invoke("findNotes", query=f"tag:{CLOZE_TAG}") or []
+    except Exception as exc:
+        raise AnkiConnectError(f"Failed to query notes with tag {CLOZE_TAG}: {exc}") from exc
+
+    all_note_ids = list(dict.fromkeys((occ_note_ids if isinstance(occ_note_ids, list) else []) + (cloze_note_ids if isinstance(cloze_note_ids, list) else [])))
+
+    if not all_note_ids:
+        return result
+
+    result.total_checked = len(all_note_ids)
+    notes_info = client.notes_info(all_note_ids)
+
+    completed_occ_notes: list[int] = []
+    completed_cloze_notes: list[int] = []
+    cards_to_unsuspend: list[int] = []
+
+    for info in notes_info:
+        if not isinstance(info, dict):
+            continue
+        nid = info.get("noteId")
+        if not nid:
+            continue
+        tags_lower = [str(t).lower() for t in info.get("tags", [])]
+        has_occ = OCCLUSION_TAG.lower() in tags_lower
+        has_cloze = CLOZE_TAG.lower() in tags_lower
+        if not has_occ and not has_cloze:
+            continue
+
+        fields_dict = info.get("fields", {})
+        note_completed = False
+
+        if has_occ:
+            occ_val = ""
+            if isinstance(fields_dict, dict) and "Occlusion" in fields_dict:
+                occ_data = fields_dict["Occlusion"]
+                occ_val = occ_data.get("value", "") if isinstance(occ_data, dict) else str(occ_data)
+            if is_occlusion_completed(occ_val):
+                completed_occ_notes.append(nid)
+                note_completed = True
+
+        if has_cloze:
+            text_val = ""
+            if isinstance(fields_dict, dict) and "Text" in fields_dict:
+                text_data = fields_dict["Text"]
+                text_val = text_data.get("value", "") if isinstance(text_data, dict) else str(text_data)
+            if is_cloze_completed(text_val):
+                completed_cloze_notes.append(nid)
+                note_completed = True
+
+        if note_completed:
+            cids = info.get("cards", [])
+            if isinstance(cids, list):
+                for cid in cids:
+                    if isinstance(cid, int):
+                        cards_to_unsuspend.append(cid)
+        else:
+            result.awaiting_masks_count += 1
+
+    unique_completed = list(dict.fromkeys(completed_occ_notes + completed_cloze_notes))
+    result.completed_notes_count = len(unique_completed)
+    result.unsuspended_cards_count = len(cards_to_unsuspend)
+    result.unflagged_note_ids = unique_completed
+    result.unsuspended_card_ids = cards_to_unsuspend
+
+    if not dry_run:
+        if completed_occ_notes:
+            try:
+                client.invoke("removeTags", notes=completed_occ_notes, tags=OCCLUSION_TAG)
+            except Exception as exc:
+                raise AnkiConnectError(f"Failed to remove tag {OCCLUSION_TAG} from completed notes: {exc}") from exc
+
+        if completed_cloze_notes:
+            try:
+                client.invoke("removeTags", notes=completed_cloze_notes, tags=CLOZE_TAG)
+            except Exception as exc:
+                raise AnkiConnectError(f"Failed to remove tag {CLOZE_TAG} from completed notes: {exc}") from exc
+
+        if cards_to_unsuspend:
+            try:
+                client.invoke("unsuspend", cards=cards_to_unsuspend)
+            except Exception as exc:
+                raise AnkiConnectError(f"Failed to unsuspend cards for completed notes: {exc}") from exc
+
+    return result
 
 
 # --- note types -----------------------------------------------------------------------------------
@@ -338,6 +452,19 @@ def export_ankiconnect(
     notes_needing_media: list[RenderedNote] = [n for n, _ in to_add]
 
     for note, card_id, note_id in to_update:
+        is_io_note = (
+            note.model == MODEL_IMAGE_OCCLUSION
+            or "occlusion" in str(note.model).lower()
+            or getattr(note.card, "kind", None) in ("image_occlusion", "Image Occlusion", KIND_IMAGE_OCCLUSION)
+        )
+        is_cloze_note = (
+            not is_io_note and (
+                note.model == MODEL_CLOZE
+                or "cloze" in str(note.model).lower()
+                or getattr(note.card, "kind", None) in ("cloze", "Cloze", KIND_CLOZE)
+                or getattr(note.card, "has_cloze_markers", False)
+            )
+        )
         if note.model == MODEL_IMAGE_OCCLUSION:
             front_name, back_name = "Header", "Comments"
             new_fields = _fields(note, card_id)
@@ -364,6 +491,17 @@ def export_ankiconnect(
                         normalize_field_html(new_fields.get(fname, "")) != normalize_field_html(existing_fields.get(fname, ""))
                         for fname in ("Header", "Back Extra")
                     )
+            elif is_cloze_note:
+                for fname in new_fields:
+                    if fname.lower() in ("text", "front"):
+                        existing_val = existing_fields.get(fname, "")
+                        stripped_existing = _strip_cloze_markers(existing_val)
+                        if normalize_field_html(new_fields.get(fname, "")) == normalize_field_html(stripped_existing):
+                            new_fields[fname] = existing_val
+                fields_changed = any(
+                    normalize_field_html(new_fields.get(fname, "")) != normalize_field_html(existing_fields.get(fname, ""))
+                    for fname in new_fields
+                )
             else:
                 fields_changed = any(
                     normalize_field_html(new_fields.get(fname, "")) != normalize_field_html(existing_fields.get(fname, ""))
@@ -434,7 +572,17 @@ def export_ankiconnect(
 
             # Case-insensitive tag diff prevents infinite dirty-marking from Anki's case normalization
             existing_tags_map = {t.lower(): t for t in existing_tags}
-            wanted_tags_map = {t.lower(): t for t in note.tags}
+            is_io_note = (
+                note.model == MODEL_IMAGE_OCCLUSION
+                or "occlusion" in str(note.model).lower()
+                or getattr(note.card, "kind", None) in ("image_occlusion", "Image Occlusion", KIND_IMAGE_OCCLUSION)
+            )
+            filtered_note_tags = [
+                t for t in note.tags
+                if not (is_io_note and t == OCCLUSION_TAG and OCCLUSION_TAG.lower() not in existing_tags_map)
+                and not (is_cloze_note and t == CLOZE_TAG and CLOZE_TAG.lower() not in existing_tags_map)
+            ]
+            wanted_tags_map = {t.lower(): t for t in filtered_note_tags}
 
             to_remove = {existing_tags_map[k] for k in existing_tags_map if k not in wanted_tags_map}
             to_add_tags = {wanted_tags_map[k] for k in wanted_tags_map if k not in existing_tags_map}

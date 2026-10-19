@@ -210,10 +210,12 @@ def _note(
 
     if card.kind == KIND_CLOZE:
         text, media = _images(answer, card, vault_root, hash_media, media_names, media_registry)
+        card_tags = list(tags)
         if cloze_notes and card.has_cloze_markers:
-            return RenderedNote(card, MODEL_CLOZE, [render_markdown(text), ""], tags, media, deck=card.deck)
-        tags.append(CLOZE_TAG)
-        return RenderedNote(card, MODEL_BASIC, [render_markdown(text), ""], tags, media, deck=card.deck)
+            return RenderedNote(card, MODEL_CLOZE, [render_markdown(text), ""], card_tags, media, deck=card.deck)
+        if CLOZE_TAG not in card_tags:
+            card_tags.append(CLOZE_TAG)
+        return RenderedNote(card, MODEL_BASIC, [render_markdown(text), ""], card_tags, media, deck=card.deck)
 
     q_text, q_media = _images(question, card, vault_root, hash_media, media_names, media_registry)
     a_text, a_media = _images(answer, card, vault_root, hash_media, media_names, media_registry)

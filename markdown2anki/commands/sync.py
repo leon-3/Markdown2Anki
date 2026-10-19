@@ -9,7 +9,7 @@ import typer
 from .. import ui
 from ..build import BuildResult, build
 from ..config import Config, Target
-from ..export.ankiconnect import AnkiConnect, AnkiConnectError, export_ankiconnect, resolve_model_names
+from ..export.ankiconnect import AnkiConnect, AnkiConnectError, export_ankiconnect, resolve_completed_occlusions, resolve_model_names
 from ..export.apkg import drop_unsupported_updates, export_apkg
 from ..flags import write_flags
 from ..occlusions import export_occlusions
@@ -96,8 +96,46 @@ def run(
         False, "--stage-occlusions",
         help="Re-stage image occlusion masks when updating existing cards.",
     ),
+    unflag_occlusions: bool = typer.Option(
+        False, "--unflag-occlusions", "--unsuspend-occlusions",
+        help="Check and unsuspend completed image occlusions in Anki and remove their TODO tags.",
+    ),
+    unflag_occlusions_only: bool = typer.Option(
+        False, "--unflag-occlusions-only", "--unsuspend-occlusions-only",
+        help="Only check and unsuspend completed image occlusions in Anki (skips vault sync).",
+    ),
 ) -> int:
     cfg = load(ctx)
+    if unflag_occlusions_only:
+        chosen_target = target.value if target else Target.anki.value
+        if chosen_target != Target.anki.value:
+            ui.error("--unflag-occlusions-only requires target 'anki' (AnkiConnect)")
+            return 2
+        client = AnkiConnect(cfg.anki_connect_url)
+        try:
+            if not client.reachable():
+                ui.error(f"cannot connect to AnkiConnect at {cfg.anki_connect_url}")
+                return 1
+        except Exception as exc:
+            ui.error(f"cannot connect to AnkiConnect at {cfg.anki_connect_url}: {exc}")
+            return 1
+        ui.header("m2a sync", f"unflag occlusions  →  {cfg.anki_connect_url}")
+        res = resolve_completed_occlusions(client, dry_run=dry_run)
+        if res.total_checked == 0:
+            console.print("  [dim]no image occlusions awaiting masks in Anki[/]")
+            return 0
+        console.print(f"  Checked {res.total_checked} image occlusion note(s) in Anki:")
+        if res.awaiting_masks_count:
+            console.print(f"    • [yellow]{res.awaiting_masks_count}[/] awaiting masks (untouched)")
+        if res.completed_notes_count:
+            if dry_run:
+                console.print(f"    • [cyan]dry run[/] - would unsuspend {res.completed_notes_count} note(s) ({res.unsuspended_cards_count} card(s)) and remove TODO_PROCESS_OCCLUSION")
+            else:
+                console.print(f"    • [green]✔[/] Unsuspended {res.completed_notes_count} note(s) ({res.unsuspended_cards_count} card(s)) and removed TODO_PROCESS_OCCLUSION")
+        else:
+            console.print("    • [dim]none have drawn masks ready to unsuspend yet[/]")
+        return 0
+
     target_file = resolve_note_file(file, cfg.vault) if file else None
     if target_file and not target_file.is_file():
         ui.error(f"file not found: {file}")
@@ -124,7 +162,7 @@ def run(
     result = build(
         selected,
         collected.diagnostics,
-        cfg.cloze_notes,
+        True,
         vault_root=cfg.vault,
         hash_media=cfg.hash_media,
         image_occlusion_mode=effective_occ_mode,
@@ -147,8 +185,20 @@ def run(
             if missing_warning:
                 console.print(f"  [yellow]warning:[/] {len(missing_warning)} card(s) were deleted in Anki. Run [cyan]m2a deleted[/] to review and resolve.")
         _print_sync_summary(0, 0, 0, 0, 0)
+        should_unflag = unflag_occlusions or getattr(cfg, "auto_unflag_occlusions", False)
+        if chosen_target == Target.anki.value and should_unflag:
+            try:
+                client = AnkiConnect(cfg.anki_connect_url)
+                res = resolve_completed_occlusions(client, dry_run=dry_run)
+                if res.completed_notes_count > 0:
+                    if dry_run:
+                        console.print(f"  [cyan]dry run[/] - would unsuspend {res.completed_notes_count} completed image occlusion(s) ({res.unsuspended_cards_count} card(s)) and remove TODO_PROCESS_OCCLUSION")
+                    else:
+                        console.print(f"  [green]✔[/] Unsuspended {res.completed_notes_count} completed image occlusion(s) ({res.unsuspended_cards_count} card(s)) and removed TODO_PROCESS_OCCLUSION")
+            except Exception as exc:
+                console.print(f"  [yellow]warning:[/] failed to resolve completed occlusions: {exc}")
         if not update and updatable_cards:
-            console.print(f"  [dim][INFO] {len(updatable_cards)} modified card(s) found in vault. Run 'm2a sync -u' to update existing cards in Anki.[/]")
+            console.print(f"  [dim][INFO] {len(updatable_cards)} already-synced card(s) found in vault. Run 'm2a sync -u' to push updates if any were modified.[/]")
         return 1 if collected.has_errors else 0
 
     if dry_run or verbose:
@@ -163,8 +213,17 @@ def run(
         if dry_run:
             console.print()
             console.print("  [dim]dry run - nothing written[/]")
+            should_unflag = unflag_occlusions or getattr(cfg, "auto_unflag_occlusions", False)
+            if chosen_target == Target.anki.value and should_unflag:
+                try:
+                    client = AnkiConnect(cfg.anki_connect_url)
+                    res = resolve_completed_occlusions(client, dry_run=True)
+                    if res.completed_notes_count > 0:
+                        console.print(f"  [cyan]dry run[/] - would unsuspend {res.completed_notes_count} completed image occlusion(s) ({res.unsuspended_cards_count} card(s)) and remove TODO_PROCESS_OCCLUSION")
+                except Exception:
+                    pass
             if not update and updatable_cards:
-                console.print(f"  [dim][INFO] {len(updatable_cards)} modified card(s) found in vault. Run 'm2a sync -u' to update existing cards in Anki.[/]")
+                console.print(f"  [dim][INFO] {len(updatable_cards)} already-synced card(s) found in vault. Run 'm2a sync -u' to push updates if any were modified.[/]")
             return 0
 
     seen = len(collected.diagnostics)
@@ -181,8 +240,18 @@ def run(
     if missing_cards:
         console.print(f"  [yellow]warning:[/] {len(missing_cards)} card(s) were deleted in Anki. Run [cyan]m2a deleted[/] to review and resolve.")
 
+    should_unflag = unflag_occlusions or getattr(cfg, "auto_unflag_occlusions", False)
+    if chosen_target == Target.anki.value and should_unflag and not dry_run:
+        try:
+            client = AnkiConnect(cfg.anki_connect_url)
+            res = resolve_completed_occlusions(client, dry_run=False)
+            if res.completed_notes_count > 0:
+                console.print(f"  [green]✔[/] Unsuspended {res.completed_notes_count} completed image occlusion(s) ({res.unsuspended_cards_count} card(s)) and removed TODO_PROCESS_OCCLUSION")
+        except Exception as exc:
+            console.print(f"  [yellow]warning:[/] failed to resolve completed occlusions: {exc}")
+
     if not update and updatable_cards:
-        console.print(f"  [dim][INFO] {len(updatable_cards)} modified card(s) found in vault. Run 'm2a sync -u' to update existing cards in Anki.[/]")
+        console.print(f"  [dim][INFO] {len(updatable_cards)} already-synced card(s) found in vault. Run 'm2a sync -u' to push updates if any were modified.[/]")
 
     return 1 if collected.has_errors else 0
 

@@ -497,3 +497,145 @@ def test_ankiconnect_exports_native_image_occlusion_and_suspends(anki):
     assert add_payload["fields"]["Occlusion"] == "{{c1::}}"
     assert "<img src=" in add_payload["fields"]["Image"]
     assert "TODO_PROCESS_OCCLUSION" in add_payload["tags"]
+
+
+def test_is_occlusion_completed():
+    from markdown2anki.occlusions import is_occlusion_completed
+
+    assert is_occlusion_completed("") is False
+    assert is_occlusion_completed("   ") is False
+    assert is_occlusion_completed(None) is False
+    assert is_occlusion_completed("<svg viewBox='0 0 100 100'></svg>") is False
+    assert is_occlusion_completed("<svg><rect x='10' y='10' width='50' height='20' data-cloze='1'/></svg>") is True
+    assert is_occlusion_completed("<svg><ellipse cx='50' cy='50' rx='20' ry='10'/></svg>") is True
+    assert is_occlusion_completed("<svg><path d='M10 10 L20 20 Z'/></svg>") is True
+    assert is_occlusion_completed("<svg><polygon points='10,10 20,20 30,10'/></svg>") is True
+    assert is_occlusion_completed("data-cloze=\"1\"") is True
+
+
+def test_is_cloze_completed():
+    from markdown2anki.occlusions import is_cloze_completed
+
+    assert is_cloze_completed("") is False
+    assert is_cloze_completed("Just regular text") is False
+    assert is_cloze_completed(None) is False
+    assert is_cloze_completed("Text with {{c1::a cloze}} deletion") is True
+    assert is_cloze_completed("Text with {{c2::another cloze}} deletion") is True
+
+
+def test_resolve_completed_occlusions(anki):
+    fake = anki(
+        models={"Basic": 1, "Image Occlusion": 2},
+        tags={
+            101: ["Anatomy", "TODO_PROCESS_OCCLUSION"],  # has masks -> should complete
+            102: ["Anatomy", "TODO_PROCESS_OCCLUSION"],  # empty occlusion -> awaiting masks
+            103: ["Anatomy"],                            # no TODO tag -> MUST NOT TOUCH
+        },
+        fields={
+            101: {"Occlusion": "<svg><rect data-cloze='1'/></svg>"},
+            102: {"Occlusion": ""},
+            103: {"Occlusion": "<svg><rect data-cloze='1'/></svg>"},
+        },
+        cards={
+            101: [1001, 1002],
+            102: [1003],
+            103: [1004],
+        },
+    )
+    # Customize findNotes for fake
+    def custom_invoke(action, **params):
+        if action == "findNotes" and "tag:TODO_PROCESS_OCCLUSION" in params.get("query", ""):
+            return [101, 102]
+        return fake.__class__.invoke(fake, action, **params)
+    fake.invoke = custom_invoke
+
+    client = ankiconnect.AnkiConnect()
+
+    # 1. Dry run
+    dry_res = ankiconnect.resolve_completed_occlusions(client, dry_run=True)
+    assert dry_res.total_checked == 2
+    assert dry_res.awaiting_masks_count == 1
+    assert dry_res.completed_notes_count == 1
+    assert dry_res.unsuspended_cards_count == 2
+    assert dry_res.unflagged_note_ids == [101]
+    assert dry_res.unsuspended_card_ids == [1001, 1002]
+    # Verify no mutation calls in dry run
+    assert not any(a == "removeTags" or a == "unsuspend" for a, _ in fake.calls)
+
+    # 2. Real execution
+    res = ankiconnect.resolve_completed_occlusions(client, dry_run=False)
+    assert res.completed_notes_count == 1
+    assert any(a == "removeTags" and p.get("notes") == [101] and p.get("tags") == "TODO_PROCESS_OCCLUSION" for a, p in fake.calls)
+    assert any(a == "unsuspend" and p.get("cards") == [1001, 1002] for a, p in fake.calls)
+    # Ensure note 103 and card 1004 were never touched
+    assert not any(p.get("cards") == [1004] for a, p in fake.calls)
+
+
+def test_is_native_occlusion_completed():
+    from markdown2anki.occlusions import is_occlusion_completed
+    assert is_occlusion_completed("{{c1::image-occlusion:rect:left=.3583:top=.0021:width=.4975:height=.4951}}<br>") is True
+
+
+def test_resolve_completed_clozes(anki):
+    fake = anki(
+        models={"Basic": 1, "Basic (Cloze)": 2},
+        tags={
+            201: ["Biology", "TODO_PROCESS_CLOZES"],
+            202: ["Biology", "TODO_PROCESS_CLOZES"],
+        },
+        fields={
+            201: {"Text": "Mitosis has {{c1::prophase}}", "Back Extra": ""},
+            202: {"Text": "Meiosis has stages", "Back Extra": ""},
+        },
+        cards={
+            201: [2001],
+            202: [2002],
+        },
+    )
+    def custom_invoke(action, **params):
+        if action == "findNotes":
+            q = params.get("query", "")
+            if "tag:TODO_PROCESS_CLOZES" in q:
+                return [201, 202]
+            if "tag:TODO_PROCESS_OCCLUSION" in q:
+                return []
+        return fake.__class__.invoke(fake, action, **params)
+    fake.invoke = custom_invoke
+
+    client = ankiconnect.AnkiConnect()
+    res = ankiconnect.resolve_completed_occlusions(client, dry_run=False)
+    assert res.completed_notes_count == 1
+    assert res.unflagged_note_ids == [201]
+    assert any(a == "removeTags" and p.get("notes") == [201] and p.get("tags") == "TODO_PROCESS_CLOZES" for a, p in fake.calls)
+    assert any(a == "unsuspend" and p.get("cards") == [2001] for a, p in fake.calls)
+
+
+def test_ankiconnect_preserves_cloze_markers_on_diff(anki, tmp_path):
+    from markdown2anki.build import BuildResult, RenderedNote
+    from markdown2anki.parser import Card
+
+    fake = anki(
+        models={"M2A Basic": 1, "M2A Cloze": 2},
+        found={"cid123": 301},
+        tags={
+            301: ["Deck"],
+        },
+        fields={
+            301: {"Text": "<p>222 {{c1::Cloze}}</p>", "Back Extra": "<!--m2a:cid123-->"},
+        },
+        cards={
+            301: [3001],
+        },
+        card_decks={
+            3001: "Deck",
+        },
+    )
+    c = Card(file=tmp_path / "n.md", line=1, question="Cloze", answer="222 Cloze", tag="Deck", card_id="cid123", kind="cloze", added=True)
+    note = RenderedNote(card=c, model="cloze", fields=["<p>222 Cloze</p>", "<!--m2a:cid123-->"], tags=["Deck"], deck="Deck")
+    result = BuildResult(notes=[note])
+
+    client = ankiconnect.AnkiConnect()
+    export = ankiconnect.export_ankiconnect(result, anki_connect_url=client.url)
+    assert export.updated == 0
+    assert export.unchanged == 1
+    assert not any(a == "updateNoteFields" for a, _ in fake.calls)

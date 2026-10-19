@@ -304,10 +304,12 @@ def _make_card(
 ) -> Card:
     answer = _strip_trailing_blank_lines(answer)
     first_line = question.strip().splitlines()[0].strip().lower() if question.strip() else ""
-    if first_line == "cloze":
+    first_line_clean = first_line.rstrip(":")
+    if first_line == "cloze" or first_line_clean == "cloze":
         kind = KIND_CLOZE
     elif (
         first_line in ("image cloze", "cloze image")
+        or first_line_clean in ("image cloze", "cloze image")
         or first_line.startswith(("image cloze:", "image cloze -", "cloze image:", "cloze image -"))
     ):
         kind = KIND_IMAGE_OCCLUSION

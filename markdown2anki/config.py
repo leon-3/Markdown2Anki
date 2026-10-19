@@ -63,6 +63,7 @@ class Config:
     tag_aliases: dict[str, str] = field(default_factory=dict)  # relative folder path prefix / segment -> tag replacement
     display: dict[str, str] = field(default_factory=dict)  # tag -> title shown on the card (deprecated)
     re_stage_occlusions: bool = False
+    auto_unflag_occlusions: bool = False  # True: automatically unsuspend and unflag completed image occlusions
     source: Path | None = None  # where the config was loaded from
 
     def __post_init__(self) -> None:
@@ -258,6 +259,7 @@ def save_vault_config(vault_path: Path, cfg: Config) -> None:
     doc["templates_dir"] = _portable_path_str(cfg.templates_dir, vault_path, doc.get("templates_dir"))
     doc["ignore"] = list(cfg.ignore)
     doc["re_stage_occlusions"] = cfg.re_stage_occlusions
+    doc["auto_unflag_occlusions"] = cfg.auto_unflag_occlusions
 
     # Update dictionary tables (deck_routing, tag_aliases)
     for table_name in ("deck_routing", "tag_aliases"):
@@ -368,6 +370,8 @@ def render_toml(cfg: Config, base: Path | None = None) -> str:
         f"suspend_new_occlusions = {'true' if cfg.suspend_new_occlusions else 'false'}",
         "# Automatically suspend newly created text-cloze cards.",
         f"suspend_new_clozes = {'true' if cfg.suspend_new_clozes else 'false'}",
+        "# Automatically unsuspend and unflag image occlusions once masks are drawn in Anki.",
+        f"auto_unflag_occlusions = {'true' if cfg.auto_unflag_occlusions else 'false'}",
         "# true: rename embedded images to deterministic 8-hex lowercase hashes (e.g. 472d6b17_01.png).",
         f"hash_media = {'true' if cfg.hash_media else 'false'}",
         "# Personal card templates: <templates_dir>/{Basic,Cloze}/{front.html,back.html,styling.css}.",

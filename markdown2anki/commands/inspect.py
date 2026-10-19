@@ -36,7 +36,7 @@ def click_edit(filename: str, editor: str | None = None) -> None:
 from .. import ui
 from ..build import build
 from ..config import Config, Target, load_config
-from ..export.ankiconnect import AnkiConnect
+from ..export.ankiconnect import AnkiConnect, resolve_completed_occlusions
 from ..ui import console, escape
 from ..vault import collect
 from ._shared import (
@@ -277,6 +277,24 @@ def status(
     updatable_cards = [c for c in active_cards if c.updatable]
     if updatable_cards:
         console.print(f"  [dim][INFO] {len(updatable_cards)} modified card(s) found in vault. Run 'm2a sync -u' to update existing cards in Anki.[/]")
+    if cfg.target == Target.anki.value:
+        try:
+            client = AnkiConnect(cfg.anki_connect_url)
+            if client.reachable():
+                res = resolve_completed_occlusions(client, dry_run=True)
+                if res.total_checked > 0:
+                    if res.completed_notes_count > 0:
+                        console.print(
+                            f"  [dim][INFO] Image Occlusions in Anki: {res.total_checked} total "
+                            f"({res.awaiting_masks_count} awaiting masks, [green]{res.completed_notes_count} ready to unflag[/] with 'm2a sync --unflag-occlusions-only').[/]"
+                        )
+                    else:
+                        console.print(
+                            f"  [dim][INFO] Image Occlusions in Anki: {res.total_checked} awaiting masks.[/]"
+                        )
+        except Exception:
+            pass
+
     return 1 if errors else 0
 
 
