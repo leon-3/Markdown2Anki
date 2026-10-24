@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "markdown2anki"
-version = "0.3.0"
+version = "1.0.0"
 description = "Turn Obsidian flashcard notes into Anki cards"
 readme = "README.md"
 license = { file = "LICENSE" }

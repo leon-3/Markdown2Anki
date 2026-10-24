@@ -1,325 +1,308 @@
 # Markdown2Anki
 
-**Markdown2Anki** is a fast, modular parser and synchronization engine that converts flashcard notes written in Obsidian or standard Markdown into Anki cards.
+[![Release](https://img.shields.io/badge/version-1.0.0-blue?style=flat-square)](https://github.com/leon-3/Markdown2Anki/releases)
+[![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](https://github.com/leon-3/Markdown2Anki/blob/main/LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-informational?style=flat-square)](https://www.python.org)
 
-It provides both an interactive command-line interface (`m2a`) and a decoupled Python library API. It parses Markdown notes, tracks flashcards with lightweight persistent IDs, routes cards across multiple decks using Longest-Prefix Matching (LPM), generates hierarchical tags with configurable folder aliasing, deterministically hashes media attachments, and updates existing cards in Anki in-place—retaining review schedules, intervals, and ease factors.
+Markdown2Anki is a command-line tool and Python engine that turns flashcards in Obsidian or Markdown files into Anki cards. It lets you write flashcards in plain Markdown, routes cards to different decks using folder rules, handles hierarchical tags with aliases, and updates existing cards in Anki without resetting your review progress.
 
-> [!TIP]
-> **Prefer a graphical desktop interface?**
-> Check out the companion Anki Desktop add-on [**Anki-VaultSync**](../Anki-VaultSync), which embeds this engine directly inside Anki Desktop with a visual dashboard, live status bar indicator, rich HTML diff inspector, safety backups, and tabbed configuration.
-
----
-
-## Key Features
-
-- **Dual Target Modes**:
-  - **AnkiConnect** (`target = "anki"`): Directly syncs notes into a running Anki instance via HTTP API (`http://127.0.0.1:8765`).
-  - **Anki Package** (`target = "apkg"`): Generates standalone `.apkg` files with bundled media for offline sharing or manual import without requiring AnkiConnect.
-- **In-Place Card Updates**:
-  - Tags cards with compact 6-character IDs embedded in Markdown (`ADDED: Question %%k3f9qz%%`) and Anki (`<!--m2a:id-->`).
-  - Run `m2a sync --update` to push edits into Anki in place—retaining review intervals, ease factors, and card learning history.
-- **Deck Rules & Longest-Prefix Routing (`[deck_routing]`)**:
-  - Map vault folders and nested subdirectories directly to target Anki decks. More specific nested rules automatically override parent folder rules (e.g. `courses/cs101` overrides `courses`).
-- **Tag Rules & Folder Aliasing (`[tag_aliases]`)**:
-  - Automatically converts vault directory hierarchies into natural hierarchical tags (e.g. `Folder::Subfolder`).
-  - Custom replacements or tag suppression via `[tag_aliases]` (e.g. mapping `"archive" = ""` suppresses that folder level from generated tags).
-  - Optional single-digit padding (`pad_single_digit_tags = true`) transforms `'1. Topic'` into `'01_Topic'` for clean alphabetical sorting, while protecting alphanumeric terms like `MP3`, `ISO9001`, or `2D Geometry`.
-- **Native Image Occlusions & Offline Staging**:
-  - **Native Mode** (`image_occlusion_mode = "native"`): Directly creates Anki 23.10+ / 24+ Image Occlusion notes with `TODO_PROCESS_OCCLUSION` tags, suspending new cards until masks are drawn in Anki.
-  - **Auto-Unflagging**: Automatically unsuspends cards and removes the `TODO_PROCESS_OCCLUSION` tag once masks are drawn (`m2a sync --unflag-occlusions`).
-  - **Staging Mode** (`image_occlusion_mode = "stage"`): Copies image assets into an `occlusions/` staging folder alongside an `index.md` mapping file for manual card creation.
-- **Deterministic Media Hashing & Path Containment**:
-  - Embedded images and media attachments are renamed to deterministic lowercase SHA-256 hashes (`<8hex>_01.ext`) with collision-safe counters.
-  - Strictly enforces path boundary containment to prevent directory traversal outside the vault root.
-- **Two-Way Drift & Deletion Detection (`m2a deleted`)**:
-  - Detects notes deleted from your Obsidian vault (orphaned cards in Anki) and allows suspending or deleting them.
-  - Detects notes deleted in Anki that still have sync IDs in Markdown, allowing you to mark them as `DELETED:` in Obsidian or re-export them into Anki.
-- **Rich Card Formatting**:
-  - Standard Q&A, multi-line questions (`EQL:`), and native Cloze deletions (`{{c1::...}}`).
-  - Inline (`$x$`) and block (`$$...$$`) LaTeX math with prose currency symbol protection.
-  - Fenced code block syntax highlighting with `#CODE#` tag processing.
-- **Comment-Preserving Configuration**:
-  - `m2a.toml` is read and written using `tomlkit`, preserving all comments, indentation, and structure when settings are modified.
+It also serves as the core parser inside [Anki-VaultSync](https://github.com/leon-3/Anki-VaultSync) for native sync in Anki Desktop, and pairs with two companion Obsidian plugins:
+- [Anki Card Styling](https://github.com/leon-3/Obsidian-Anki-Card-Highlighting): Renders visual cloze badges, card types, Extra Question Line (`EQL:`) tags, and status bars in Obsidian.
+- [Anki Cloze Deletion](https://github.com/leon-3/Obsidian-Anki-Cloze): Gives you quick shortcuts (`Ctrl+Shift+C` and `Ctrl+Alt+C`) to create clozes scoped to each card block.
+- [Anki-VaultSync](https://github.com/leon-3/Anki-VaultSync): Native Anki Desktop add-on for direct GUI synchronization without external tools.
 
 ---
 
-## Installation
+## Highlights & Key Features
 
-### Requirements
-- **Python 3.11+**
-- **Anki Desktop** (if syncing directly via AnkiConnect, ensure the [AnkiConnect](https://ankiweb.net/shared/info/2055492159) add-on is installed, code `2055492159`).
+- Two sync modes: Sync directly into a running Anki profile via AnkiConnect (`target = "anki"`), or compile standalone `.apkg` packages with bundled media files (`target = "apkg"`).
+- Updates cards in place: Uses lightweight IDs in Markdown (`ADDED: ... %%id%%`) to update existing cards without resetting review intervals, ease factors, or card history.
+- Smart deck routing: Maps folders to specific Anki decks using Longest Prefix Matching, so subfolder rules automatically override parent rules.
+- Flexible tag aliases: Builds hierarchical Anki tags from your folders, with full control to rename or hide specific path segments.
+- Automatic media bundling: Detects, hashes, and copies linked images, audio files, and image occlusions without missing attachments.
+- Clean CLI commands: Includes an interactive setup wizard (`m2a init`), vault health checks (`m2a status`), drift detection (`m2a deleted`), and dry-run previews.
 
-### Setup
+---
+
+## Installation & Quickstart
+
+### Installation from Source
+Clone the repository and install Markdown2Anki into your Python environment:
+
 ```bash
 git clone https://github.com/leon-3/Markdown2Anki.git
 cd Markdown2Anki
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev]'
+pip install .
 ```
+
+Verify that the CLI is installed:
+
+```bash
+m2a --version
+```
+
+### Quickstart Setup
+1. Create a configuration file in your vault or project folder:
+   ```bash
+   m2a init
+   ```
+2. Follow the setup prompt to choose your vault folder, default deck, and target mode (`anki` for AnkiConnect or `apkg` for offline packages).
+3. Check your notes for card statistics and formatting issues:
+   ```bash
+   m2a status
+   ```
+4. Sync new cards to Anki:
+   ```bash
+   m2a sync
+   ```
+5. Update existing modified cards:
+   ```bash
+   m2a sync -u
+   ```
 
 ---
 
-## Quick Start
+## Documentation
 
-### 1. Initialize Configuration
-Generate an `m2a.toml` configuration interactively:
-```bash
-m2a init
-```
-Or create one in the current directory:
-```bash
-m2a init --here
-```
+### 1. Card Syntax & Identifiers
 
-### 2. Check Vault Status
-Parse notes, validate formatting, and review card counts without modifying any files:
-```bash
-m2a status
-m2a status -v
-```
+#### Card Delimiters (`---`)
+Cards are enclosed between standard horizontal rules (`---`). Any content outside these delimiters (regular notes, lecture summaries, outlines) is completely ignored by the parser.
 
-### 3. Sync to Anki
-Preview pending changes without making modifications:
-```bash
-m2a sync --dry-run
+#### Basic Q&A Cards
+The question is placed on the line directly below `---`. All following lines before the next `---` become the answer:
+
+```markdown
+---
+Where does cellular respiration occur?
+It takes place primarily in the mitochondria of eukaryotic cells.
+
+---
 ```
 
-Export new cards into Anki:
-```bash
-m2a sync
+#### Sync Status & Card IDs (`ADDED:` / `%%id%%`)
+When a card is synced for the first time, Markdown2Anki marks the question line with `ADDED:` and appends a unique 6-character ID (`%%id%%`):
+
+```markdown
+---
+ADDED: Where does cellular respiration occur? %%k8f2a1%%
+It takes place primarily in the mitochondria of eukaryotic cells.
+
+---
 ```
 
-Update previously exported cards that were modified in Obsidian:
-```bash
-m2a sync --update
-```
+- **Editing Synced Cards:** You can freely update the question or answer in Markdown. As long as `%%id%%` remains intact, running `m2a sync -u` updates the existing Anki note in place without resetting review statistics or scheduling.
+- **Safety Guarantee:** The unique ID ties the Markdown note to the Anki note ID, preventing duplicate card creation across multiple sync runs.
 
-Sync vault and automatically unsuspend completed Image Occlusions:
-```bash
-m2a sync --update --unflag-occlusions
+#### Deleting Cards (`DELETED:`)
+To remove a card from Anki, replace `ADDED:` with `DELETED:`:
+
+```markdown
+---
+DELETED: Where does cellular respiration occur? %%k8f2a1%%
+It takes place primarily in the mitochondria of eukaryotic cells.
+
+---
 ```
+Running `m2a sync` removes the note from Anki and cleans up the card block in your Markdown note. You can also run `m2a deleted` to detect any removed cards or drift between your vault and Anki.
+
+#### Extra Question Lines (`EQL:`)
+If a basic Q&A card needs an extra subtitle, context, or prompt on the front of the card, add `EQL:` on the line directly below the question:
+
+```markdown
+---
+Where does cellular respiration occur?
+EQL: Mention both the organelle and the energy molecule produced.
+It takes place in the mitochondria and produces ATP.
+
+---
+```
+The line with `EQL:` is rendered as a distinct subtitle beneath the main question on the front of the Anki card.
 
 ---
 
-## Note Format & Syntax
+### 2. Cloze Deletion & Image Occlusion
 
-Cards are defined inside Markdown files delimited by horizontal rules (`---`):
+#### Text Cloze Cards (`Cloze`)
+To create a Cloze card, write `Cloze` on the line directly after `---`, followed by your text containing standard cloze markers `{{c1::answer}}` or `{{c1::answer::hint}}`:
 
-````markdown
-# Cryptography
-## Block Ciphers
----
-What is the primary security goal of a block cipher?
-It provides confidentiality by transforming fixed-length plaintext blocks into ciphertext under a secret key.
-
----
-What is a Key Schedule?
-EQL: and why is it needed?
-A key schedule expands a master key into round keys to prevent identical keys across rounds.
-
+```markdown
 ---
 Cloze
-{{c1::AES}} operates on fixed blocks of {{c2::128}} bits using key lengths of 128, 192, or 256 bits.
+Glycolysis occurs in the {{c1::cytoplasm}} and produces a net yield of {{c2::2 ATP}} molecules.
 
+---
+```
+
+Once synced, `ADDED:` and the card ID are placed directly on the `Cloze` header line:
+
+```markdown
+---
+ADDED: Cloze %%d4f8k2%%
+Glycolysis occurs in the {{c1::cytoplasm}} and produces a net yield of {{c2::2 ATP}} molecules.
+
+---
+```
+
+- **Unmasked Clozes & Tagging:** If you create a `Cloze` card that does not yet contain any `{{c1::...}}` deletions, the card is exported as a Cloze note and tagged with `TODO_PROCESS_CLOZES`.
+- **Automatic Suspend & Unsuspend:** When `suspend_new_clozes = true`, unmasked cloze cards are suspended in Anki so empty placeholders do not appear in your study queue. Once deletions are added in Markdown or Anki, running `m2a sync` with unflagging enabled detects the completed note, automatically unsuspends it, and removes the `TODO_PROCESS_CLOZES` tag.
+
+#### Image Occlusion Cards (`Image Cloze`)
+To create an image occlusion card, write `Image Cloze` on the line directly after `---`, followed by a linked image:
+
+```markdown
 ---
 Image Cloze
-![[feistel_network.png]]
+![[Synapse-Diagram.png]]
 
 ---
-How do you implement quicksort in C?
-```c
-#CODE#
-void quicksort(int *arr, int low, int high) { ... }
 ```
-````
 
-### Syntax Rules & Conventions
-1. **Card Separator**: A line starting with `---` starts a flashcard.
-2. **Question**: The first non-empty line after `---`.
-3. **Multi-line Questions**: Use `EQL: <additional line>` directly following the question.
-4. **Answer**: Everything between the question and the next card separator or heading.
-5. **Cloze Deletions**: Question line begins with `Cloze`. With `cloze_notes = true`, `{{c1::answer}}` generates native Anki cloze notes.
-6. **Image Occlusions**: Question line begins with `Image Cloze` and references `![[image.png]]`.
-   - In `native` mode, creates an Image Occlusion note in Anki ready for masking.
-   - In `stage` mode, copies images into `<output_dir>/occlusions/` with an `index.md` mapping file.
-7. **Code Blocks**: Code blocks containing `#CODE#` or `PCL` are automatically tagged with `TODO_PROCESS_CODE`.
-8. **Math**: `$x$` produces inline math `\(x\)`; `$$...$$` produces display math `\[...\]`. Literal currency amounts (e.g. `$5 and $10`) are preserved.
+Synced state:
+
+```markdown
+---
+ADDED: Image Cloze %%o4fj5k3%%
+![[Synapse-Diagram.png]]
+
+---
+```
+
+Images linked inside cards are automatically hashed and copied to your Anki media folder or bundled directly into exported `.apkg` files.
+
+- **Native vs. Legacy Mode (`image_occlusion_mode`):**
+  - **Native Mode (`image_occlusion_mode = "native"`):** Creates native Anki Image Occlusion notes directly in Anki. Newly synced cards are tagged with `TODO_PROCESS_OCCLUSION` and suspended (`suspend_new_occlusions = true`) until you open Anki and draw your occlusion masks using Anki's native editor.
+  - **Legacy Staging Mode (`image_occlusion_mode = "stage"`):** Exports the raw image to an external staging directory for manual external mask preparation without native Anki occlusion notes.
+- **Automatic Unsuspend on Completion:** Once you draw masks on the card in Anki, running `m2a sync --unflag-occlusions` automatically verifies that masks exist, unsuspends the card for study, and removes the `TODO_PROCESS_OCCLUSION` tag.
 
 ---
 
-## Configuration Reference (`m2a.toml`)
+### 3. Tag Generation & Heading Hierarchy
 
-`m2a.toml` sits at the root of your Obsidian vault or in `~/.config/m2a/m2a.toml`:
+Tags in Anki are generated automatically from the note's folder location and the Markdown headings (`#`, `##`, `###`) placed above the card:
+
+```markdown
+# Biology
+## Biochemistry
+
+---
+What is the function of ATP synthase?
+Synthesizes ATP from ADP and inorganic phosphate.
+
+---
+```
+
+This card is assigned the hierarchical Anki tag: `Biology::Biochemistry`.
+
+#### Numbered Tag Padding (`pad_single_digit_tags`)
+When enabled in `m2a.toml`, single-digit numbers followed by a space or punctuation in folder names and headings (e.g. `1. Anatomy` or `2-Biochemistry`) are automatically padded with a leading zero (`01_Anatomy::02_Biochemistry`). This ensures tags sort in natural numerical order in Anki's sidebar.
+
+---
+
+### 4. Tag & Deck Routing
+
+You can customize where cards are placed and how tags are named based on their folder in your vault:
+
+#### Deck Routing (Where cards go)
+Deck routing in `[deck_routing]` maps vault folders to specific Anki decks using Longest Prefix Matching (LPM):
+
+| Vault Folder Path | Target Deck in Anki |
+| :--- | :--- |
+| `Medicine` | `University::Medicine` |
+| `Medicine/Cardiology` | `University::Medicine::Cardiology` |
+
+- A card in `Medicine/Cardiology/Notes.md` goes to `University::Medicine::Cardiology`.
+- A card in `Medicine/Anatomy/Notes.md` falls back to `University::Medicine`.
+- Cards outside configured folders go to your default `deck`.
+
+#### Tag Aliases (What tags get replaced)
+Tag rules in `[tag_aliases]` let you shorten, rename, or hide specific folder segments in the generated Anki tags:
+
+| Vault Folder Path | Tag Alias | Result in Anki Tag |
+| :--- | :--- | :--- |
+| `Courses/Semester_1` | `Sem1` | Folder segment `Courses/Semester_1` becomes `Sem1` |
+| `Drafts` | `""` | Segment `Drafts` is completely removed from the tag |
+
+---
+
+### 5. Configuration Reference (`m2a.toml`)
 
 ```toml
-# Path to your Obsidian vault (~ and relative paths supported)
-vault = "~/Documents/ObsidianVault"
-
-# Default Target Deck: fallback Anki deck for cards without explicit folder rule
-deck = "Default"
-package_name = "default-package"
-
-# Base tag prepended to all cards (optional)
-base_tag = ""
-
-# Output directory for standalone .apkg exports and occlusions
-output_dir = "."
-
-# Target: "anki" pushes via AnkiConnect; "apkg" writes a package file
-target = "anki"
-anki_connect_url = "http://127.0.0.1:8765"
-anki_basic_model = "M2A Basic"
-anki_cloze_model = "M2A Cloze"
-
-# Convert Cloze cards with {{c1::...}} syntax into native Anki Cloze notes
-cloze_notes = true
-
-# Image Occlusion mode: "native" (creates native Anki IO notes) or "stage" (offline folder staging)
-image_occlusion_mode = "native"
-
-# Suspend newly synced Image Occlusion cards until masks are drawn in Anki
+[general]
+vault_path = "/path/to/obsidian/vault"
+deck = "University::Default"
+target = "anki" # "anki" (via AnkiConnect) or "apkg" (standalone file)
+pad_single_digit_tags = true
+image_occlusion_mode = "native" # "native" or "stage"
 suspend_new_occlusions = true
-
-# Suspend newly synced unmasked Cloze cards until clozes are added in Anki
 suspend_new_clozes = true
-
-# Freeze Image Occlusion notes so subsequent syncs do not overwrite drawn masks
-freeze_image_occlusions = false
-
-# Automatically unsuspend and unflag completed image occlusions and text clozes during sync
 auto_unflag_occlusions = true
 
-# Rename media to deterministic lowercase SHA-256 hashes (e.g. 472d6b17_01.png)
-hash_media = true
-
-# Format single-digit folder numbers with leading zeros (e.g. '1. Topic' -> '01_Topic')
-pad_single_digit_tags = true
-
-# Folders and glob patterns to ignore during scanning
-ignore = [".git", ".obsidian", "templates", "archive/*", "ai"]
-
-# Deck Rules & Folder Mapping (Longest-Prefix Matching)
 [deck_routing]
-"courses" = "01. University"
-"courses/cs101" = "01. University::CS101"
-"work" = "02. Professional"
+"Physics" = "University::Physics"
+"Physics/Thermodynamics" = "University::Physics::Thermodynamics"
+"Biology" = "University::Biology"
 
-# Tag Rules & Folder Aliases (map folder paths to custom tags, or "" to suppress)
 [tag_aliases]
-"courses" = "01_uni"
-"work" = "02_work"
-"templates" = ""  # suppresses tag generation for this folder level
+"Physics/Thermodynamics" = "Thermo"
+"Drafts" = "" # Excludes this folder from generated tags
 ```
 
-> [!NOTE]
-> **Backward Compatibility:** Legacy configuration files using `[decks]`, `[subjects]`, or `[subdirectories]` are automatically migrated to `[deck_routing]` and `[tag_aliases]` on load.
+- `vault_path`: Path to your Obsidian vault root.
+- `deck`: Default destination deck when no specific folder rule matches (subdecks separated by `::`).
+- `target`: `anki` to send cards to Anki via AnkiConnect HTTP API (`http://127.0.0.1:8765`), or `apkg` to generate an export package file.
+- `pad_single_digit_tags`: When `true`, single numbers in headings/folders (like `1. Chapter` or `2-Lecture`) are zero-padded to `01_Chapter`, keeping tags sorted alphabetically in Anki.
+- `image_occlusion_mode`: `"native"` to create Anki Image Occlusion notes, or `"stage"` for external legacy staging.
+- `suspend_new_occlusions` / `suspend_new_clozes`: Suspends incomplete cards until masks or clozes are drawn.
+- `auto_unflag_occlusions`: Automatically removes `TODO_PROCESS` tags and unsuspends completed notes.
+- `[deck_routing]`: Maps folder prefixes to Anki decks using Longest Prefix Matching.
+- `[tag_aliases]`: Replaces path segments in tags or hides them when mapped to `""`.
 
 ---
 
-## CLI Reference
+### 6. CLI Command Reference
 
-### Core Workflow Commands
+For detailed options and flags for any command, run `m2a --help` or `m2a <command> --help`.
 
-| Command | Description |
-| :--- | :--- |
-| `m2a status` | Display card counts (pending, added, total) per folder and perform vault health checks. |
-| `m2a status -v` | Display detailed card list with line numbers, IDs, and diagnostics. |
-| `m2a status --course <name>` | Filter status overview by course or folder. |
-| `m2a status -f <file>` | Inspect a single Markdown note file. |
-| `m2a sync` | Export new cards to Anki and write `ADDED: ... %%id%%` flags to Markdown notes. |
-| `m2a sync -u`, `--update` | Update previously exported cards in Anki in place. |
-| `m2a sync -n`, `--dry-run` | Preview pending card creations and updates without modifying files or Anki. |
-| `m2a sync --target apkg` | Export offline `.apkg` package with bundled media files. |
-| `m2a sync --unflag-occlusions` | Sync vault and unsuspend completed Image Occlusion cards in Anki. |
-| `m2a sync --unflag-occlusions-only` | Only unsuspend completed Image Occlusion cards in Anki (skips vault scan). |
-
-### Setup & Maintenance Commands
-
-| Command | Description |
-| :--- | :--- |
-| `m2a init` | Interactive wizard to create `~/.config/m2a/m2a.toml` (`--here` writes `./m2a.toml`, `-y` accepts defaults). |
-| `m2a config` | Inspect active configuration (`--validate` checks semantics, `--raw` prints TOML, `--edit` opens in `$EDITOR`). |
-| `m2a deleted` | Detect drift between vault and Anki (removed vault notes or deleted Anki cards). |
-| `m2a deleted --suspend` | Suspend orphaned Anki cards whose source notes were removed from vault (preserves history). |
-| `m2a deleted --delete` | Permanently delete orphaned notes from Anki. |
-| `m2a deleted --mark-deleted` | Mark notes deleted in Anki as `DELETED: ... %%id%%` in Markdown vault. |
-| `m2a deleted --recreate` | Re-export notes deleted in Anki back into Anki. |
-| `m2a unflag` | Remove `ADDED` and `DELETED` flags from notes so they can be re-exported as new cards (`-n` dry-run). |
+| Command | Key Flags | Description |
+| :--- | :--- | :--- |
+| `m2a init` | | Interactive setup wizard to generate `m2a.toml`. |
+| `m2a status` | `-v`, `--course <name>`, `-f <file>` | Shows card overview per course/folder and runs vault health checks. |
+| `m2a sync` | `-n` | Dry run: preview newly discovered cards without modifying files or Anki. |
+| `m2a sync` | | Exports new cards to Anki and writes `ADDED:` flags with unique IDs. |
+| `m2a sync` | `-u`, `--update` | Exports new cards and updates modified existing cards in Anki in place. |
+| `m2a sync` | `--target apkg`, `-o <file>` | Exports cards and bundled media to an offline `.apkg` file. |
+| `m2a sync` | `--unflag-occlusions` | Syncs vault and automatically unsuspends completed occlusions in Anki. |
+| `m2a deleted` | `--suspend`, `--delete` | Detects drift and suspends or permanently deletes orphaned notes from Anki. |
+| `m2a unflag` | | Removes `ADDED:` / `DELETED:` flags so cards can be re-exported as new. |
+| `m2a config` | | Inspects or edits the active configuration file. |
 
 ---
 
-## Architecture & Integration
+## Development & Building
 
-Markdown2Anki is designed with strict separation between pure parsing/rendering logic and external side effects:
+### Requirements
+- Python 3.11+
+- Virtual environment (`venv`)
 
-```
-Markdown Files (.md)
-       │
-       ▼
-┌───────────────────────────────┐
-│   markdown2anki Core Engine   │
-│   - vault.py (LPM routing)    │
-│   - parser.py (Card models)   │
-│   - render.py (HTML / Math)   │
-│   - ids.py & flags.py         │
-│   - build.py (Media hashing)  │
-└───────┬───────────────┬───────┘
-        │               │
-        │ Pure Python   │ CLI dependencies
-        │ Vendored      │ (typer, rich, questionary)
-        ▼               ▼
-┌──────────────┐ ┌──────────────┐
-│Anki-VaultSync│ │   m2a CLI    │
-│(Anki Add-on) │ │  (Standalone)│
-└──────────────┘ └──────────────┘
+### Setting Up Development
+```bash
+git clone https://github.com/leon-3/Markdown2Anki.git
+cd Markdown2Anki
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
 ```
 
-The core package (`markdown2anki`) does not depend on CLI libraries (`typer`, `rich`, `questionary`) or `genanki`. This enables **Anki-VaultSync** to vendor the pure-Python core directly into Anki Desktop with zero dependency conflicts and near-instant load times.
-
----
-
-## Python API
-
-You can embed Markdown2Anki into your own Python scripts or automated pipelines:
-
-```python
-from pathlib import Path
-from markdown2anki.config import load_vault_config
-from markdown2anki.vault import collect
-from markdown2anki.build import build
-from markdown2anki.export.ankiconnect import export_ankiconnect
-
-# Load vault configuration
-vault_path = Path("~/Documents/ObsidianVault").expanduser()
-cfg = load_vault_config(vault_path)
-
-# Discover and parse all flashcards
-collected = collect(cfg)
-print(f"Discovered {len(collected.cards)} card(s)")
-
-# Render pending cards and export via AnkiConnect
-pending_cards = [c for c in collected.cards if c.pending]
-if pending_cards:
-    diagnostics = []
-    result = build(
-        pending_cards,
-        diagnostics,
-        cloze_notes=cfg.cloze_notes,
-        vault_root=cfg.vault,
-        hash_media=cfg.hash_media,
-        image_occlusion_mode=cfg.image_occlusion_mode,
-    )
-    report = export_ankiconnect(result, cfg=cfg)
-    print(f"Exported: {report.added} added, {report.updated} updated")
-```
-
----
-
-## Running Tests
-
-Run the full pytest suite:
+### Running Tests
+Run the test suite (170 tests):
 
 ```bash
-pytest
+pytest tests
+```
+
+### Building the Package
+```bash
+python -m pip install build
+python -m build
 ```
