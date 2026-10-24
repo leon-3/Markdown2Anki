@@ -55,7 +55,7 @@ class Config:
     image_occlusion_mode: str = "native"  # "native": creates Image Occlusion notes; "stage": offline folder staging
     freeze_image_occlusions: bool = False  # True: completely freeze added Image Occlusion cards
     suspend_new_occlusions: bool = True  # True: suspend newly synced Image Occlusion cards until masked
-    suspend_new_clozes: bool = False  # True: suspend newly synced Cloze cards
+    suspend_new_clozes: bool = True  # True: suspend newly synced unmasked Cloze cards
     hash_media: bool = True  # True: rename embedded images to deterministic 8-hex hashes (e.g. 472d6b17_01.png)
     templates_dir: Path = field(default_factory=user_templates_dir)  # personal card templates
     ignore: list[str] = field(default_factory=lambda: list(DEFAULT_IGNORE))
@@ -63,7 +63,7 @@ class Config:
     tag_aliases: dict[str, str] = field(default_factory=dict)  # relative folder path prefix / segment -> tag replacement
     display: dict[str, str] = field(default_factory=dict)  # tag -> title shown on the card (deprecated)
     re_stage_occlusions: bool = False
-    auto_unflag_occlusions: bool = False  # True: automatically unsuspend and unflag completed image occlusions
+    auto_unflag_occlusions: bool = True  # True: automatically unsuspend and unflag completed image occlusions and text clozes
     source: Path | None = None  # where the config was loaded from
 
     def __post_init__(self) -> None:
@@ -368,9 +368,9 @@ def render_toml(cfg: Config, base: Path | None = None) -> str:
         f"freeze_image_occlusions = {'true' if cfg.freeze_image_occlusions else 'false'}",
         "# Automatically suspend newly created image occlusion cards until masks are drawn in Anki.",
         f"suspend_new_occlusions = {'true' if cfg.suspend_new_occlusions else 'false'}",
-        "# Automatically suspend newly created text-cloze cards.",
+        "# Automatically suspend newly created text-cloze cards without cloze markers.",
         f"suspend_new_clozes = {'true' if cfg.suspend_new_clozes else 'false'}",
-        "# Automatically unsuspend and unflag image occlusions once masks are drawn in Anki.",
+        "# Automatically unsuspend and unflag occlusions and clozes once masks/clozes are drawn in Anki.",
         f"auto_unflag_occlusions = {'true' if cfg.auto_unflag_occlusions else 'false'}",
         "# true: rename embedded images to deterministic 8-hex lowercase hashes (e.g. 472d6b17_01.png).",
         f"hash_media = {'true' if cfg.hash_media else 'false'}",

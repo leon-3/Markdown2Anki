@@ -181,14 +181,14 @@ image_occlusion_mode = "native"
 # Suspend newly synced Image Occlusion cards until masks are drawn in Anki
 suspend_new_occlusions = true
 
-# Suspend newly synced Cloze cards until reviewed
-suspend_new_clozes = false
+# Suspend newly synced unmasked Cloze cards until clozes are added in Anki
+suspend_new_clozes = true
 
 # Freeze Image Occlusion notes so subsequent syncs do not overwrite drawn masks
 freeze_image_occlusions = false
 
-# Automatically unsuspend and unflag completed image occlusions during sync
-auto_unflag_occlusions = false
+# Automatically unsuspend and unflag completed image occlusions and text clozes during sync
+auto_unflag_occlusions = true
 
 # Rename media to deterministic lowercase SHA-256 hashes (e.g. 472d6b17_01.png)
 hash_media = true

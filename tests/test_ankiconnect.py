@@ -639,3 +639,51 @@ def test_ankiconnect_preserves_cloze_markers_on_diff(anki, tmp_path):
     assert export.updated == 0
     assert export.unchanged == 1
     assert not any(a == "updateNoteFields" for a, _ in fake.calls)
+
+
+def test_ankiconnect_suspend_only_unmasked_clozes(anki, tmp_path):
+    from markdown2anki.build import BuildResult, RenderedNote
+    from markdown2anki.config import Config
+    from markdown2anki.constants import CLOZE_TAG
+    from markdown2anki.parser import Card
+
+    fake = anki(
+        models={"M2A Basic": 1, "M2A Cloze": 2},
+        cards={
+            501: [5001],
+            502: [5002],
+        },
+    )
+    # Note 1: Cloze card with {{c1::marker}}
+    c1 = Card(file=tmp_path / "n.md", line=1, question="Cloze", answer="Text with {{c1::marker}}", tag="Deck", card_id="c1", kind="cloze", has_cloze_markers=True)
+    note1 = RenderedNote(card=c1, model="cloze", fields=["<p>Text with {{c1::marker}}</p>", "<!--m2a:c1-->"], tags=["Deck"], deck="Deck")
+
+    # Note 2: Unmasked cloze card without markers
+    c2 = Card(file=tmp_path / "n.md", line=5, question="Cloze", answer="Text without marker", tag="Deck", card_id="c2", kind="cloze", has_cloze_markers=False)
+    note2 = RenderedNote(card=c2, model="basic", fields=["<p>Text without marker</p>", "<!--m2a:c2-->"], tags=["Deck", CLOZE_TAG], deck="Deck")
+
+    result = BuildResult(notes=[note1, note2])
+    cfg = Config(vault=tmp_path, suspend_new_clozes=True)
+
+    client = ankiconnect.AnkiConnect()
+    # custom mock addNotes to return note IDs 501 and 502
+    orig_invoke = fake.invoke
+    def custom_invoke(action, **params):
+        if action == "addNotes":
+            return [501, 502]
+        if action == "findCards":
+            q = params.get("query", "")
+            if "nid:502" in q:
+                return [5002]
+            if "nid:501" in q:
+                return [5001]
+        return orig_invoke(action, **params)
+    fake.invoke = custom_invoke
+
+    export = ankiconnect.export_ankiconnect(result, cfg=cfg, anki_connect_url=client.url)
+    assert export.added == 2
+
+    # Verify suspend was only called for card 5002 (belonging to note 502 without clozes), NOT note 501
+    suspend_calls = [p for a, p in fake.calls if a == "suspend"]
+    assert len(suspend_calls) == 1
+    assert suspend_calls[0].get("cards") == [5002]

@@ -658,7 +658,7 @@ def export_ankiconnect(
 
         note_ids = client.invoke("addNotes", notes=payloads)
         suspend_new_occlusions = getattr(cfg, "suspend_new_occlusions", True) if cfg else True
-        suspend_new_clozes = getattr(cfg, "suspend_new_clozes", False) if cfg else False
+        suspend_new_clozes = getattr(cfg, "suspend_new_clozes", True) if cfg else True
         notes_to_suspend: list[int] = []
 
         for (note, card_id), note_id in zip(to_add, note_ids):
@@ -686,6 +686,7 @@ def export_ankiconnect(
                     or "cloze" in str(note.model).lower()
                     or getattr(note.card, "kind", None) in ("cloze", "Cloze", KIND_CLOZE)
                     or getattr(note.card, "has_cloze_markers", False)
+                    or CLOZE_TAG in note.tags
                 )
             )
             if is_io:
@@ -694,8 +695,18 @@ def export_ankiconnect(
                 export.added_text_cloze += 1
             else:
                 export.added_basic += 1
-            if (note.model == MODEL_IMAGE_OCCLUSION and suspend_new_occlusions) or \
-               (note.model == MODEL_CLOZE and suspend_new_clozes):
+            should_suspend = False
+            if is_io and suspend_new_occlusions:
+                should_suspend = True
+            elif is_cloze and suspend_new_clozes:
+                has_cloze = (
+                    (note.card is not None and getattr(note.card, "has_cloze_markers", False))
+                    or any(is_cloze_completed(f) for f in note.fields)
+                )
+                if not has_cloze:
+                    should_suspend = True
+
+            if should_suspend:
                 notes_to_suspend.append(note_id)
 
         if notes_to_suspend:

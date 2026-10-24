@@ -185,7 +185,7 @@ def run(
             if missing_warning:
                 console.print(f"  [yellow]warning:[/] {len(missing_warning)} card(s) were deleted in Anki. Run [cyan]m2a deleted[/] to review and resolve.")
         _print_sync_summary(0, 0, 0, 0, 0)
-        should_unflag = unflag_occlusions or getattr(cfg, "auto_unflag_occlusions", False)
+        should_unflag = unflag_occlusions or getattr(cfg, "auto_unflag_occlusions", True)
         if chosen_target == Target.anki.value and should_unflag:
             try:
                 client = AnkiConnect(cfg.anki_connect_url)
@@ -213,7 +213,7 @@ def run(
         if dry_run:
             console.print()
             console.print("  [dim]dry run - nothing written[/]")
-            should_unflag = unflag_occlusions or getattr(cfg, "auto_unflag_occlusions", False)
+            should_unflag = unflag_occlusions or getattr(cfg, "auto_unflag_occlusions", True)
             if chosen_target == Target.anki.value and should_unflag:
                 try:
                     client = AnkiConnect(cfg.anki_connect_url)
@@ -240,7 +240,7 @@ def run(
     if missing_cards:
         console.print(f"  [yellow]warning:[/] {len(missing_cards)} card(s) were deleted in Anki. Run [cyan]m2a deleted[/] to review and resolve.")
 
-    should_unflag = unflag_occlusions or getattr(cfg, "auto_unflag_occlusions", False)
+    should_unflag = unflag_occlusions or getattr(cfg, "auto_unflag_occlusions", True)
     if chosen_target == Target.anki.value and should_unflag and not dry_run:
         try:
             client = AnkiConnect(cfg.anki_connect_url)
